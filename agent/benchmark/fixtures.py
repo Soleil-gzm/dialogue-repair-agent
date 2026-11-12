@@ -32,11 +32,11 @@ AGENT_REPLIES = [
 ]
 
 
-def _system(idx: int, scenario: str, product: str, rng: random.Random) -> str:
+def _system(idx: int, scenario: str, product: str, oid: str, rng: random.Random) -> str:
     return (
         "# 角色\n售后回访专员\n"
         f"## 客户编号\nCUST-{idx:04d}\n"
-        f"## 订单编号\nORD-{rng.randint(100000, 999999)}\n"
+        f"## 订单编号\n{oid}\n"
         f"## 产品名称\n{product}\n"
         f"## 场景标签\n{scenario}\n"
         f"## 客服电话\n400-000-0000\n"
@@ -48,12 +48,14 @@ def _system(idx: int, scenario: str, product: str, rng: random.Random) -> str:
 def make_dialogue(idx: int, n_turns: int, rng: random.Random) -> dict:
     scenario = SCENARIOS[idx % len(SCENARIOS)]
     product = PRODUCTS[idx % len(PRODUCTS)]
-    messages = [{"role": "system", "content": _system(idx, scenario, product, rng)}]
+    oid = f"ORD-{rng.randint(100000, 999999)}"
+    messages = [{"role": "system", "content": _system(idx, scenario, product, oid, rng)}]
     for t in range(n_turns):
-        messages.append({
-            "role": "user",
-            "content": CUSTOMER_REPLIES[(idx + t) % len(CUSTOMER_REPLIES)],
-        })
+        text = CUSTOMER_REPLIES[(idx + t) % len(CUSTOMER_REPLIES)]
+        # 首轮带上订单号：真实用户会引用单号，也让实体保真校验有可测对象
+        if t == 0:
+            text = f"{text}（订单号 {oid}）"
+        messages.append({"role": "user", "content": text})
         messages.append({
             "role": "assistant",
             "content": AGENT_REPLIES[(idx + t) % len(AGENT_REPLIES)],

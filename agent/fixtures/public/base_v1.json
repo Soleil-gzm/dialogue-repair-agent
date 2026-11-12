@@ -7,7 +7,7 @@
       },
       {
         "role": "user",
-        "content": "我上周下的单，现在还没收到。"
+        "content": "我上周下的单，现在还没收到。（订单号 ORD-927955）"
       },
       {
         "role": "assistant",
@@ -51,7 +51,7 @@
       },
       {
         "role": "user",
-        "content": "这个型号和页面写的不一样。"
+        "content": "这个型号和页面写的不一样。（订单号 ORD-958756）"
       },
       {
         "role": "assistant",
@@ -113,7 +113,7 @@
       },
       {
         "role": "user",
-        "content": "我想问下能不能换货。"
+        "content": "我想问下能不能换货。（订单号 ORD-733398）"
       },
       {
         "role": "assistant",
@@ -157,7 +157,7 @@
       },
       {
         "role": "user",
-        "content": "已经等很久了，麻烦帮我催一下。"
+        "content": "已经等很久了，麻烦帮我催一下。（订单号 ORD-556516）"
       },
       {
         "role": "assistant",
@@ -201,7 +201,7 @@
       },
       {
         "role": "user",
-        "content": "收到的包装有点破损。"
+        "content": "收到的包装有点破损。（订单号 ORD-669294）"
       },
       {
         "role": "assistant",
@@ -263,7 +263,7 @@
       },
       {
         "role": "user",
-        "content": "能不能给个大概时间？"
+        "content": "能不能给个大概时间？（订单号 ORD-617647）"
       },
       {
         "role": "assistant",
@@ -307,7 +307,7 @@
       },
       {
         "role": "user",
-        "content": "我上周下的单，现在还没收到。"
+        "content": "我上周下的单，现在还没收到。（订单号 ORD-644909）"
       },
       {
         "role": "assistant",
@@ -342,7 +342,7 @@
       },
       {
         "role": "user",
-        "content": "这个型号和页面写的不一样。"
+        "content": "这个型号和页面写的不一样。（订单号 ORD-653759）"
       },
       {
         "role": "assistant",
@@ -377,7 +377,7 @@
       },
       {
         "role": "user",
-        "content": "我想问下能不能换货。"
+        "content": "我想问下能不能换货。（订单号 ORD-802959）"
       },
       {
         "role": "assistant",
@@ -421,7 +421,7 @@
       },
       {
         "role": "user",
-        "content": "已经等很久了，麻烦帮我催一下。"
+        "content": "已经等很久了，麻烦帮我催一下。（订单号 ORD-117256）"
       },
       {
         "role": "assistant",
@@ -492,7 +492,7 @@
       },
       {
         "role": "user",
-        "content": "收到的包装有点破损。"
+        "content": "收到的包装有点破损。（订单号 ORD-990095）"
       },
       {
         "role": "assistant",
@@ -545,7 +545,7 @@
       },
       {
         "role": "user",
-        "content": "能不能给个大概时间？"
+        "content": "能不能给个大概时间？（订单号 ORD-410115）"
       },
       {
         "role": "assistant",

@@ -8,19 +8,19 @@
   },
   "arms": {
     "A0": {
-      "artifact_sha256": "200527793cf114b40a9764eafa3b3dde3e66caf6ab0fac95c0e7ee5bdb0e9c4a",
+      "artifact_sha256": "e577cfa78cb2e7b7e70a1edb6f138a7ce6662dd1d7879f9a16bd8f122a7b729d",
       "config_sha256": "e19b08cc40cd66b986d03af75d083732a15d710f5df2b1067c5966e912146e52",
       "prompt_version": null
     },
     "A1": {
-      "artifact_sha256": "c47675fc7252fb9ebacbc24917cfcc5157ba54ee978450c7c88adf544a5e0487",
+      "artifact_sha256": "a4bd1dc91d20b6444cb1acab6b5d2a297072ef142940f4b5bebb30e53ff8ea5f",
       "config_sha256": "7d9c37ca786fb29ba318c08b582003323709f9687690e4620b33c0934a0a1362",
       "prompt_version": null
     }
   },
   "code": {
     "dirty": true,
-    "git_commit": "c382eaca7dbb15d01e35387c61c6942ff07cc819"
+    "git_commit": "fde585bb0849b2b30b2e6bd603b51d5a8a665943"
   },
   "evaluator": {
     "judge_model": "deepseek-chat",
@@ -33,7 +33,7 @@
   "input": {
     "n_total": 12,
     "path": "agent/fixtures/public/base_v1.json",
-    "sha256": "fa3371640c9feee94366239cc18dd6505fdd518661fbec5ab55b126ddd937e41"
+    "sha256": "e6fc7190525233788aecf84e6208eff9fddef2c45ba0b7f73af6789fe52f1cdb"
   },
   "lock_version": "1.0",
   "price_table": {
