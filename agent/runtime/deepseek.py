@@ -40,6 +40,10 @@ class LLMParseError(LLMError):
     """响应结构不符合预期。"""
 
 
+class LLMConfigError(LLMError):
+    """请求参数不合法，重试无意义，应在本地提前拦截。"""
+
+
 def _sha256(obj: Any) -> str:
     payload = json.dumps(obj, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -162,12 +166,24 @@ class DeepSeekClient:
             "stream": False,
         }
         if self.settings.json_mode:
-            payload["response_format"] = response_format or {"type": "json_object"}
+            fmt = response_format or {"type": "json_object"}
+            # DeepSeek 的硬约束：json_object 要求 prompt 里出现 "json" 字样，
+            # 否则服务端直接 400。本地先拦，避免把配置问题伪装成网络抖动。
+            if fmt.get("type") == "json_object" and not self._mentions_json(messages):
+                raise LLMConfigError(
+                    "json_mode 要求 prompt 中包含 'json' 字样（DeepSeek 接口约束），"
+                    "请修改 prompt 或显式传入 response_format=None 并关闭 json_mode"
+                )
+            payload["response_format"] = fmt
         elif response_format is not None:
             payload["response_format"] = response_format
         if tools:
             payload["tools"] = tools
         return payload
+
+    @staticmethod
+    def _mentions_json(messages: List[Dict[str, str]]) -> bool:
+        return any("json" in str(m.get("content", "")).lower() for m in messages)
 
     def _post(self, payload: Dict[str, Any], timeout_s: Optional[float]) -> httpx.Response:
         timeout = self.settings.timeout_s if timeout_s is None else timeout_s

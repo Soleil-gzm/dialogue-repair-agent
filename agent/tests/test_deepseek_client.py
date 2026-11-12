@@ -7,15 +7,18 @@ import pytest
 
 from agent.runtime.config import LLMSettings
 from agent.runtime.deepseek import (
-    DeepSeekClient, LLMHTTPError, LLMParseError,
+    DeepSeekClient, LLMConfigError, LLMHTTPError, LLMParseError,
 )
 from agent.runtime.ledger import Pricing, TokenLedger
 
 OK_BODY = {
     "model": "deepseek-chat",
-    "choices": [{"message": {"content": "{\"ok\": true}"}}],
+    "choices": [{"message": {"content": '{"ok": true}'}}],
     "usage": {"prompt_tokens": 120, "completion_tokens": 30},
 }
+
+# json_mode 要求 prompt 含 "json" 字样（DeepSeek 接口约束）
+PROMPT = [{"role": "user", "content": "请输出 json"}]
 
 
 def _settings() -> LLMSettings:
@@ -38,8 +41,7 @@ def _ok(_request):
 
 class TestSuccessPath:
     def test_returns_text_and_usage(self):
-        c = _client(_ok)
-        r = c.chat([{"role": "user", "content": "hi"}])
+        r = _client(_ok).chat(PROMPT)
         assert r.text == '{"ok": true}'
         assert r.input_tokens == 120 and r.output_tokens == 30
         assert r.cached is False
@@ -52,7 +54,7 @@ class TestSuccessPath:
             seen["path"] = request.url.path
             return httpx.Response(200, json=OK_BODY)
 
-        _client(handler).chat([{"role": "user", "content": "x"}])
+        _client(handler).chat(PROMPT)
         assert seen["auth"] == "Bearer sk-test"
         assert seen["path"].endswith("/chat/completions")
 
@@ -63,7 +65,7 @@ class TestSuccessPath:
             seen["body"] = json.loads(request.content)
             return httpx.Response(200, json=OK_BODY)
 
-        _client(handler).chat([{"role": "user", "content": "x"}])
+        _client(handler).chat(PROMPT)
         assert seen["body"]["response_format"] == {"type": "json_object"}
 
     def test_tools_passed_through(self):
@@ -74,8 +76,28 @@ class TestSuccessPath:
             return httpx.Response(200, json=OK_BODY)
 
         specs = [{"type": "function", "function": {"name": "t"}}]
-        _client(handler).chat([{"role": "user", "content": "x"}], tools=specs)
+        _client(handler).chat(PROMPT, tools=specs)
         assert seen["body"]["tools"] == specs
+
+
+class TestJsonModeGuard:
+    def test_rejects_prompt_without_json_keyword(self):
+        """DeepSeek 的硬约束在本地拦截，不必等服务端 400。"""
+        calls = {"n": 0}
+
+        def handler(_request):
+            calls["n"] += 1
+            return httpx.Response(200, json=OK_BODY)
+
+        with pytest.raises(LLMConfigError):
+            _client(handler).chat([{"role": "user", "content": "请输出结果"}])
+        assert calls["n"] == 0, "不该发出请求"
+
+    def test_allows_when_response_format_absent_and_json_mode_off(self):
+        s = LLMSettings(model="m", base_url="https://api.test", json_mode=False)
+        c = DeepSeekClient(settings=s, api_key="k",
+                           transport=httpx.MockTransport(_ok))
+        assert c.chat([{"role": "user", "content": "任意"}]).text == '{"ok": true}'
 
 
 class TestCaching:
@@ -87,8 +109,8 @@ class TestCaching:
             return httpx.Response(200, json=OK_BODY)
 
         c = _client(handler)
-        first = c.chat([{"role": "user", "content": "same"}])
-        second = c.chat([{"role": "user", "content": "same"}])
+        first = c.chat(PROMPT)
+        second = c.chat(PROMPT)
         assert calls["n"] == 1
         assert first.cached is False and second.cached is True
 
@@ -96,8 +118,8 @@ class TestCaching:
         ledger = TokenLedger()
         c = _client(_ok, ledger=ledger,
                     pricing=Pricing(input_per_1m=1000, output_per_1m=2000, version="v1"))
-        c.chat([{"role": "user", "content": "same"}])
-        c.chat([{"role": "user", "content": "same"}])
+        c.chat(PROMPT)
+        c.chat(PROMPT)
         assert ledger.entries[0].cost_cny > 0
         assert ledger.entries[1].cached is True
         assert ledger.entries[1].cost_cny == 0.0
@@ -110,8 +132,8 @@ class TestCaching:
             return httpx.Response(200, json=OK_BODY)
 
         c = _client(handler)
-        c.chat([{"role": "user", "content": "a"}])
-        c.chat([{"role": "user", "content": "b"}])
+        c.chat([{"role": "user", "content": "a json"}])
+        c.chat([{"role": "user", "content": "b json"}])
         assert calls["n"] == 2
 
 
@@ -126,7 +148,7 @@ class TestRetry:
             return httpx.Response(200, json=OK_BODY)
 
         ledger = TokenLedger()
-        r = _client(handler, ledger=ledger).chat([{"role": "user", "content": "x"}])
+        r = _client(handler, ledger=ledger).chat(PROMPT)
         assert r.text == '{"ok": true}'
         assert ledger.entries[0].retries == 1
 
@@ -139,8 +161,7 @@ class TestRetry:
                 raise httpx.ConnectError("boom", request=request)
             return httpx.Response(200, json=OK_BODY)
 
-        r = _client(handler).chat([{"role": "user", "content": "x"}])
-        assert r.text == '{"ok": true}'
+        assert _client(handler).chat(PROMPT).text == '{"ok": true}'
 
     def test_does_not_retry_on_400(self):
         calls = {"n": 0}
@@ -150,7 +171,7 @@ class TestRetry:
             return httpx.Response(400, text="bad request")
 
         with pytest.raises(LLMHTTPError):
-            _client(handler).chat([{"role": "user", "content": "x"}])
+            _client(handler).chat(PROMPT)
         assert calls["n"] == 1, "参数错误重试没有意义"
 
     def test_gives_up_after_max_attempts(self):
@@ -161,14 +182,13 @@ class TestRetry:
             return httpx.Response(503, text="unavailable")
 
         with pytest.raises(LLMHTTPError):
-            _client(handler, max_attempts=3).chat([{"role": "user", "content": "x"}])
+            _client(handler, max_attempts=3).chat(PROMPT)
         assert calls["n"] == 3
 
     def test_failed_call_recorded_in_ledger(self):
         ledger = TokenLedger()
         with pytest.raises(LLMHTTPError):
-            _client(lambda _r: httpx.Response(400, text="bad"), ledger=ledger).chat(
-                [{"role": "user", "content": "x"}])
+            _client(lambda _r: httpx.Response(400, text="bad"), ledger=ledger).chat(PROMPT)
         e = ledger.entries[0]
         assert e.ok is False
         assert e.error_type == "LLMHTTPError"
@@ -179,15 +199,14 @@ class TestParseErrors:
     def test_missing_choices_raises(self):
         c = _client(lambda _r: httpx.Response(200, json={"model": "m"}))
         with pytest.raises(LLMParseError):
-            c.chat([{"role": "user", "content": "x"}])
+            c.chat(PROMPT)
 
     def test_invalid_json_raises(self):
         c = _client(lambda _r: httpx.Response(200, text="<html>"))
         with pytest.raises(LLMParseError):
-            c.chat([{"role": "user", "content": "x"}])
+            c.chat(PROMPT)
 
     def test_missing_usage_defaults_zero(self):
         body = {"choices": [{"message": {"content": "hi"}}]}
-        c = _client(lambda _r: httpx.Response(200, json=body))
-        r = c.chat([{"role": "user", "content": "x"}])
+        r = _client(lambda _r: httpx.Response(200, json=body)).chat(PROMPT)
         assert r.input_tokens == 0 and r.output_tokens == 0
