@@ -4,7 +4,9 @@
 
 用 LLM Agent 修复模板拼接式对话的跨轮断裂问题，并用一套**可复现的评测体系**证明它有效。
 
-当前状态：`M0 插件骨架` —— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、可插拔插件机制与 130 项测试。
+当前状态：`M3 真实调用（进行中）` —— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、可插拔插件机制、
+规则型工具 `check_consistency`、6 类程序化缺陷注入集、决策循环（预算 / 死循环保护 / Trace），
+以及 DeepSeek 客户端（重试分类 + token 账本 + 响应缓存）。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。
 > 数据全部程序化合成（中立域：订单售后回访）。
@@ -92,13 +94,26 @@ agent/
 │   ├── lock.py           不可变 lock + 校验
 │   ├── arms.py           A0 恒等臂 / A1 上游增强臂
 │   ├── fixtures.py       中立域程序化数据生成
+│   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
 │   ├── run.py            CLI
 │   ├── baseline/         入库：冻结的基线
 │   └── output/           不入库：运行产物
 ├── runtime/
 │   ├── llm.py            LLM 客户端协议 + FakeLLMClient
-│   └── registry.py       工具注册表 + 工具契约
-├── fixtures/public/      公开轨数据
+│   ├── deepseek.py       DeepSeek 客户端（重试分类 / 缓存 / 逐次计量）
+│   ├── config.py         .env 读取与 LLMSettings（密钥只走环境变量）
+│   ├── ledger.py         token 账本（append-only，缓存命中成本归零）
+│   ├── registry.py       工具注册表 + 工具契约
+│   ├── loop.py           决策循环（预算 / 死循环识别 / 终止原因）
+│   ├── policy.py         决策策略（规则型；LLM 策略待接入）
+│   └── state.py / budget.py / trace.py / checkpoint.py
+├── eval/
+│   ├── entities.py       实体抽取（编号/电话/金额/日期，领域无关）
+│   └── rules.py          五条硬约束：system / 结构 / 实体 / 说话人 / 跨角色泄漏
+├── tools/
+│   ├── check_consistency.py  规则型工具（可脱离 LLM 运行）
+│   └── fallback_keep.py      保底回退到原对话
+├── fixtures/public/      公开轨数据（base_v1 / defects_v1）
 ├── docs/                 设计文档（基准方案、路线）
 ├── tests/                测试，含开源边界自证
 ├── oss_manifest.txt      发布清单（PUBLIC / BUILD / PRIVATE）
@@ -122,15 +137,16 @@ agent/
 | 发布文件无业务标识 | `test_public_files_have_no_business_terms` |
 | 发布代码不依赖上游工程 | `test_public_python_does_not_import_main_project_at_top_level` |
 | 导出不会带出私有文件 | `test_private_files_excluded` |
+| 事实冲突 100% 拦截、干净样本 0% 误杀 | `test_fact_conflict_blocked_100pct`、`test_false_positive_rate_zero` |
 
 ---
 
 ## 路线
 
-`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 → M2 决策循环 → M3 真实调用 → M4 开源切片 → M5 作品集`
+`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 🚧 → M4 开源切片 → M5 作品集`
 
-后续阶段将加入：可注册工具集、预算与终止条件、决策链 Trace、程序化缺陷注入集、
-四层指标（能力/决策/效果/工程）与消融曲线上报。
+M3 剩余：语义连贯性检查工具（覆盖答非所问 / 重复空转）、LLM 决策策略与规则策略消融、
+真实指标测量（缺陷拦截率、干净样本误报率、token 成本）。
 
 ---
 
