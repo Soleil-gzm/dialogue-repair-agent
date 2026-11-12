@@ -26,7 +26,7 @@ dev = ["pytest>=7"]
 Repository = "https://github.com/Soleil-gzm/dialogue-repair-agent"
 
 [tool.setuptools]
-packages = ["agent", "agent.benchmark", "agent.runtime", "agent.tests", "agent.tests.benchmark"]
+packages = ["agent", "agent.benchmark", "agent.eval", "agent.tools", "agent.runtime", "agent.tests", "agent.tests.benchmark"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
