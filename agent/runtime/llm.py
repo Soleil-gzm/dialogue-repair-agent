@@ -24,6 +24,8 @@ class LLMResponse:
     latency_ms: int = 0
     # 输入侧命中服务端前缀缓存的部分，按更低单价计费
     cached_tokens: int = 0
+    # function calling 结果，统一归一化为 {"id","name","arguments": dict}
+    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:

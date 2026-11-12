@@ -239,6 +239,68 @@ class TestRetry:
         assert e.http_status == 400
 
 
+class TestToolCalls:
+    TOOL_BODY = {
+        "model": "deepseek-flash",
+        "choices": [{"message": {
+            "content": "",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "check_consistency",
+                             "arguments": '{"before": {"messages": []}, "after": {}}'},
+            }],
+        }}],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+    }
+
+    def test_parses_tool_calls(self):
+        r = _client(lambda _r: httpx.Response(200, json=self.TOOL_BODY)).chat(
+            [{"role": "user", "content": "任意"}], tools=[{"type": "function"}])
+        assert r.tool_calls[0]["name"] == "check_consistency"
+        assert r.tool_calls[0]["arguments"] == {"before": {"messages": []}, "after": {}}
+        assert r.text == ""
+
+    def test_json_mode_not_forced_when_tools_present(self):
+        """工具调用与 json_object 互斥，带 tools 时不能加 response_format。"""
+        seen = {}
+
+        def handler(request):
+            seen["body"] = json.loads(request.content)
+            return httpx.Response(200, json=self.TOOL_BODY)
+
+        _client(handler).chat([{"role": "user", "content": "无需 json 字样"}],
+                              tools=[{"type": "function"}])
+        assert "response_format" not in seen["body"]
+        assert seen["body"]["tools"] == [{"type": "function"}]
+
+    def test_cached_response_keeps_tool_calls(self):
+        c = _client(lambda _r: httpx.Response(200, json=self.TOOL_BODY))
+        args = ([{"role": "user", "content": "任意"}], {"tools": [{"type": "function"}]})
+        c.chat(args[0], tools=args[1]["tools"])
+        second = c.chat(args[0], tools=args[1]["tools"])
+        assert second.cached is True
+        assert second.tool_calls[0]["name"] == "check_consistency"
+
+    def test_malformed_arguments_becomes_empty_dict(self):
+        body = {
+            "choices": [{"message": {"content": "", "tool_calls": [
+                {"function": {"name": "t", "arguments": "not-json"}},
+            ]}}],
+        }
+        r = _client(lambda _r: httpx.Response(200, json=body)).chat(
+            [{"role": "user", "content": "x"}], tools=[{"type": "function"}])
+        assert r.tool_calls[0]["arguments"] == {}
+
+    def test_tool_call_without_name_skipped(self):
+        body = {"choices": [{"message": {"content": "", "tool_calls": [
+            {"function": {"arguments": "{}"}},
+        ]}}]}
+        r = _client(lambda _r: httpx.Response(200, json=body)).chat(
+            [{"role": "user", "content": "x"}], tools=[{"type": "function"}])
+        assert r.tool_calls == []
+
+
 class TestParseErrors:
     def test_missing_choices_raises(self):
         c = _client(lambda _r: httpx.Response(200, json={"model": "m"}))

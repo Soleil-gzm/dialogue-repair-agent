@@ -118,6 +118,7 @@ class DeepSeekClient:
                 text=hit.text, model=hit.model,
                 input_tokens=hit.input_tokens, output_tokens=hit.output_tokens,
                 cached=True, latency_ms=0, cached_tokens=hit.cached_tokens,
+                tool_calls=list(hit.tool_calls),
             )
 
         attempts = {"n": 0}
@@ -161,6 +162,7 @@ class DeepSeekClient:
             text=result.text, model=result.model,
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
             cached=False, latency_ms=latency_ms, cached_tokens=result.cached_tokens,
+            tool_calls=list(result.tool_calls),
         )
 
     # ------------------------------------------------------------------ 内部
@@ -173,7 +175,8 @@ class DeepSeekClient:
             "max_tokens": self.settings.max_tokens if max_tokens is None else max_tokens,
             "stream": False,
         }
-        if self.settings.json_mode:
+        if self.settings.json_mode and not tools:
+            # 工具调用本身就是结构化输出；DeepSeek 不允许与 json_object 同时指定
             fmt = response_format or {"type": "json_object"}
             # DeepSeek 的硬约束：json_object 要求 prompt 里出现 "json" 字样，
             # 否则服务端直接 400。本地先拦，避免把配置问题伪装成网络抖动。
@@ -212,17 +215,48 @@ class DeepSeekClient:
     def _parse(self, resp: httpx.Response) -> LLMResponse:
         try:
             data = resp.json()
-            text = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
         except (ValueError, KeyError, IndexError, TypeError) as e:
             raise LLMParseError(f"响应结构异常: {e}") from e
+
+        if not isinstance(message, dict):
+            raise LLMParseError("choices[0].message 不是对象")
+
         usage = data.get("usage") or {}
         return LLMResponse(
-            text=text or "",
+            text=message.get("content") or "",
             model=data.get("model") or self.settings.model,
             input_tokens=int(usage.get("prompt_tokens") or 0),
             output_tokens=int(usage.get("completion_tokens") or 0),
             cached_tokens=self._cache_hit_tokens(usage),
+            tool_calls=self._parse_tool_calls(message.get("tool_calls")),
         )
+
+    @staticmethod
+    def _parse_tool_calls(raw: Any) -> List[Dict[str, Any]]:
+        """把厂商格式归一化为 {"id","name","arguments": dict}。
+
+        arguments 是 JSON 字符串：解析失败时给空 dict，由上层策略显式报错，
+        不要在这里猜测参数含义。
+        """
+        out: List[Dict[str, Any]] = []
+        for item in raw or []:
+            fn = (item or {}).get("function") or {}
+            name = fn.get("name")
+            if not name:
+                continue
+            args_raw = fn.get("arguments")
+            if isinstance(args_raw, dict):
+                args = args_raw
+            else:
+                try:
+                    args = json.loads(args_raw or "{}")
+                except (TypeError, ValueError):
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            out.append({"id": item.get("id"), "name": name, "arguments": args})
+        return out
 
     @staticmethod
     def _cache_hit_tokens(usage: Dict[str, Any]) -> int:
