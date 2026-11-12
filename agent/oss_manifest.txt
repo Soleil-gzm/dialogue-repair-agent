@@ -36,6 +36,7 @@ scripts/export_oss.py
 oss_template/pyproject.toml
 oss_template/LICENSE
 oss_template/.gitignore
+oss_template/agent_readme.md
 oss_template/.github/workflows/ci.yml
 tests/test_export.py
 
