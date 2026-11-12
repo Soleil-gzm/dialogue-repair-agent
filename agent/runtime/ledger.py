@@ -14,6 +14,22 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 
+@dataclass(frozen=True)
+class Pricing:
+    """单价表版本化：只记版本号，历史成本可重算而不被调价污染。"""
+
+    input_per_1m: float = 0.0
+    output_per_1m: float = 0.0
+    version: str = "unset"
+
+    def cost(self, input_tokens: int, output_tokens: int) -> float:
+        return round(
+            input_tokens / 1_000_000 * self.input_per_1m
+            + output_tokens / 1_000_000 * self.output_per_1m,
+            8,
+        )
+
+
 @dataclass
 class LedgerEntry:
     run_id: str

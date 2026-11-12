@@ -2,8 +2,8 @@
 
 三种实现，对应三种运行档位：
 - FakeLLMClient    ：单测 / CI / 离线复现，确定性
-- DeepSeekClient   ：M3 接入，真实调用（本期不实现）
-- CassetteClient   ：回放真实响应（M3 之后）
+- DeepSeekClient   ：真实调用（见 deepseek.py）
+- CassetteClient   ：回放真实响应（后续）
 
 协议先行：上层只依赖 LLMClient，不关心具体厂商。
 """
