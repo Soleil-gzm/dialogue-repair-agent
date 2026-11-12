@@ -43,7 +43,11 @@ class LLMClient(Protocol):
         tools: Optional[List[Dict[str, Any]]] = None,
         timeout_s: float = 60.0,
         idempotency_key: Optional[str] = None,
+        stage: str = "check",
+        run_id: str = "adhoc",
+        dialogue_key: str = "",
     ) -> LLMResponse:
+        """stage / run_id / dialogue_key 只用于计量归集，不改变请求语义。"""
         ...
 
 
@@ -78,6 +82,9 @@ class FakeLLMClient:
         tools: Optional[List[Dict[str, Any]]] = None,
         timeout_s: float = 60.0,
         idempotency_key: Optional[str] = None,
+        stage: str = "check",
+        run_id: str = "adhoc",
+        dialogue_key: str = "",
     ) -> LLMResponse:
         self.calls.append({
             "messages": list(messages),
@@ -86,6 +93,9 @@ class FakeLLMClient:
             "response_format": response_format,
             "tools": tools,
             "idempotency_key": idempotency_key,
+            "stage": stage,
+            "run_id": run_id,
+            "dialogue_key": dialogue_key,
         })
 
         text = None
