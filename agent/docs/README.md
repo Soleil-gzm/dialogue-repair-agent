@@ -36,14 +36,25 @@
 |---|---|---|
 | T0 测试地基 | ✅ 完成 | `tests/{unit,contract,integration,snapshot}`，85 项通过 |
 | T1 基线冻结 | ✅ 完成 | `agent/benchmark/`：四元组指纹、不可变 lock、A0/A1 对照臂、`baseline/baseline_lock.json` |
-| M0 及以后 | ⬜ 待开始 | 见总纲 §5.5 门禁 |
+| M0 插件骨架 | ✅ 完成 | `pipeline/core/extension_loader.py` + `agent/plugin/`（透传步骤）+ `agent/runtime/`（LLM 协议、工具注册表） |
+| M1 及以后 | ⬜ 待开始 | 见总纲 §5.5 门禁 |
+
+**M0 门禁结果**
+
+| 门禁 | 结果 |
+|---|---|
+| 插件模块缺失时主流程可跑 | ✅ |
+| 插件关闭时产物与 T1 冻结基线一致 | ✅ 05_augment 产物 sha256 相同 |
+| 主工程不 import 插件 | ✅ AST 扫描 |
+| 工具注册表契约 | ✅ 注册 / 去重 / 分发 / 返回类型 |
+| 透传不改数据 | ✅ 输入输出规范化哈希相同 |
 
 **T1 复现命令**
 
 ```powershell
 python -m agent.benchmark.fixtures --n 12 --seed 20261112     # 生成公开轨 fixture
-python -m agent.benchmark.run --input fixtures/public/base_v1.json --arms A0,A1
-python -m agent.benchmark.run --input fixtures/public/base_v1.json --arms A0,A1 --verify
+python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0,A1
+python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0,A1 --verify
 ```
 
 门禁细则见总纲 §5.5。

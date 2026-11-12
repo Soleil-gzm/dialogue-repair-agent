@@ -15,10 +15,15 @@ benchmark/fixtures.py
 benchmark/run.py
 benchmark/baseline/baseline_lock.json
 benchmark/baseline/lock_changelog.md
+runtime/__init__.py
+runtime/llm.py
+runtime/registry.py
 fixtures/public/base_v1.json
 tests/__init__.py
 tests/conftest.py
 tests/test_oss_boundary.py
+tests/test_tool_registry.py
+tests/test_fake_llm.py
 tests/benchmark/__init__.py
 tests/benchmark/test_arms.py
 tests/benchmark/test_canonical.py
@@ -30,9 +35,11 @@ docs/Benchmark专项设计方案.md
 docs/对话数据Agent化改进计划书.md
 
 # ---------- BUILD ----------
-# 内部发布工具：只在主工程环境使用，不随开源仓库分发
+# 内部发布工具与主工程胶水层：只在主工程环境使用，不随开源仓库分发
 scripts/__init__.py
 scripts/export_oss.py
+plugin/__init__.py
+plugin/step.py
 oss_template/pyproject.toml
 oss_template/LICENSE
 oss_template/.gitignore
