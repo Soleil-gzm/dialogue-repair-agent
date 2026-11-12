@@ -25,6 +25,8 @@ tools/fallback_keep.py
 runtime/__init__.py
 runtime/llm.py
 runtime/registry.py
+runtime/config.py
+runtime/ledger.py
 runtime/budget.py
 runtime/state.py
 runtime/trace.py
@@ -44,6 +46,8 @@ tests/test_check_consistency.py
 tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_budget.py
+tests/test_config.py
+tests/test_ledger.py
 tests/test_trace.py
 tests/test_policy_rule.py
 tests/test_loop.py
