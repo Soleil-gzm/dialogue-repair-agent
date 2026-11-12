@@ -39,7 +39,7 @@
 | M0 插件骨架 | ✅ 完成 | `pipeline/core/extension_loader.py` + `agent/plugin/`（透传步骤）+ `agent/runtime/`（LLM 协议、工具注册表） |
 | M1 单工具 | ✅ 完成 | 五条硬约束（R1–R5）+ `check_consistency` 工具 + 6 类缺陷注入集（120 条）；结构类拦截 100%，误杀 0 |
 | M2 决策循环 | ✅ 完成 | 预算 / 状态 / Trace / 规则策略 / 循环 / 条目级断点；死循环与预算保护全部生效 |
-| M3 真实调用 | 🚧 进行中 | 配置/密钥、token 账本、DeepSeek 客户端、版本化价格表、`check_coherence`、语义判官（D1）已完成；LLM 决策策略与全量指标测量待接入 |
+| M3 真实调用 | 🚧 进行中 | 配置/密钥、token 账本、DeepSeek 客户端、版本化价格表、`check_coherence`、语义判官（D1）、`LLMPolicy`（function calling）已完成；全量指标测量与消融对比待接入 |
 | M4 及以后 | ⬜ 待开始 | 见总纲 §5.5 门禁 |
 
 **M0 门禁结果**
