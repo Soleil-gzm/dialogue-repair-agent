@@ -5,8 +5,9 @@
 用 LLM Agent 修复模板拼接式对话的跨轮断裂问题，并用一套**可复现的评测体系**证明它有效。
 
 当前状态：`M3 真实调用（进行中）` —— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、可插拔插件机制、
-规则型工具 `check_consistency`、6 类程序化缺陷注入集、决策循环（预算 / 死循环保护 / Trace），
-以及 DeepSeek 客户端（重试分类 + token 账本 + 响应缓存）。
+五条保真约束 + `check_consistency`、连贯性检查 `check_coherence`（重复空转 / 退化轮次）、
+6 类程序化缺陷注入集、决策循环（预算 / 死循环保护 / Trace），以及 DeepSeek 客户端
+（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。
 > 数据全部程序化合成（中立域：订单售后回访）。
@@ -109,9 +110,11 @@ agent/
 │   └── state.py / budget.py / trace.py / checkpoint.py
 ├── eval/
 │   ├── entities.py       实体抽取（编号/电话/金额/日期，领域无关）
-│   └── rules.py          五条硬约束：system / 结构 / 实体 / 说话人 / 跨角色泄漏
+│   ├── rules.py          五条硬约束：system / 结构 / 实体 / 说话人 / 跨角色泄漏
+│   └── coherence.py      连贯性：相邻轮重复空转、退化轮次（语义判官可注入）
 ├── tools/
 │   ├── check_consistency.py  规则型工具（可脱离 LLM 运行）
+│   ├── check_coherence.py    连贯性工具（默认离线，判官可注入）
 │   └── fallback_keep.py      保底回退到原对话
 ├── fixtures/public/      公开轨数据（base_v1 / defects_v1）
 ├── docs/                 设计文档（基准方案、路线）
@@ -138,6 +141,7 @@ agent/
 | 发布代码不依赖上游工程 | `test_public_python_does_not_import_main_project_at_top_level` |
 | 导出不会带出私有文件 | `test_private_files_excluded` |
 | 事实冲突 100% 拦截、干净样本 0% 误杀 | `test_fact_conflict_blocked_100pct`、`test_false_positive_rate_zero` |
+| 重复空转 100% 拦截、干净样本 0% 误报 | `test_d5_blocked_100pct`、`test_clean_samples_not_flagged` |
 
 ---
 
@@ -145,8 +149,8 @@ agent/
 
 `T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 🚧 → M4 开源切片 → M5 作品集`
 
-M3 剩余：语义连贯性检查工具（覆盖答非所问 / 重复空转）、LLM 决策策略与规则策略消融、
-真实指标测量（缺陷拦截率、干净样本误报率、token 成本）。
+M3 剩余：语义判官接入（D1 答非所问）、LLM 决策策略与规则策略消融、
+全量真实指标测量（各类缺陷拦截率、干净样本误报率、token 成本）。
 
 ---
 
