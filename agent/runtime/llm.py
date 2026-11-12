@@ -22,6 +22,8 @@ class LLMResponse:
     output_tokens: int = 0
     cached: bool = False
     latency_ms: int = 0
+    # 输入侧命中服务端前缀缓存的部分，按更低单价计费
+    cached_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:

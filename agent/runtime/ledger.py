@@ -16,15 +16,28 @@ from typing import Any, Dict, List, Optional, Union
 
 @dataclass(frozen=True)
 class Pricing:
-    """单价表版本化：只记版本号，历史成本可重算而不被调价污染。"""
+    """单价表版本化：只记版本号，历史成本可重算而不被调价污染。
+
+    输入侧区分缓存命中/未命中：命中部分按更低的单价计，否则成本会系统性偏高。
+    input_per_1m 指缓存未命中的输入单价。
+    """
 
     input_per_1m: float = 0.0
     output_per_1m: float = 0.0
     version: str = "unset"
+    cache_hit_input_per_1m: float = 0.0
 
-    def cost(self, input_tokens: int, output_tokens: int) -> float:
+    def cost(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_hit_tokens: int = 0,
+    ) -> float:
+        hit = max(0, min(cache_hit_tokens, input_tokens))
+        miss = max(0, input_tokens - hit)
         return round(
-            input_tokens / 1_000_000 * self.input_per_1m
+            miss / 1_000_000 * self.input_per_1m
+            + hit / 1_000_000 * self.cache_hit_input_per_1m
             + output_tokens / 1_000_000 * self.output_per_1m,
             8,
         )

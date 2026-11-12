@@ -27,6 +27,7 @@ runtime/llm.py
 runtime/registry.py
 runtime/config.py
 runtime/ledger.py
+runtime/pricing.py
 runtime/deepseek.py
 runtime/budget.py
 runtime/state.py
@@ -49,6 +50,7 @@ tests/test_defects.py
 tests/test_budget.py
 tests/test_config.py
 tests/test_ledger.py
+tests/test_pricing.py
 tests/test_deepseek_client.py
 tests/test_trace.py
 tests/test_policy_rule.py

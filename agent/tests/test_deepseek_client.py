@@ -10,6 +10,7 @@ from agent.runtime.deepseek import (
     DeepSeekClient, LLMConfigError, LLMHTTPError, LLMParseError,
 )
 from agent.runtime.ledger import Pricing, TokenLedger
+from agent.runtime.pricing import PEAK
 
 OK_BODY = {
     "model": "deepseek-chat",
@@ -78,6 +79,49 @@ class TestSuccessPath:
         specs = [{"type": "function", "function": {"name": "t"}}]
         _client(handler).chat(PROMPT, tools=specs)
         assert seen["body"]["tools"] == specs
+
+
+class TestUsageAccounting:
+    def test_parses_deepseek_cache_hit_tokens(self):
+        body = {
+            "model": "deepseek-flash",
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 1000, "completion_tokens": 100,
+                "prompt_cache_hit_tokens": 800, "prompt_cache_miss_tokens": 200,
+            },
+        }
+        r = _client(lambda _r: httpx.Response(200, json=body)).chat(PROMPT)
+        assert r.cached_tokens == 800
+
+    def test_parses_openai_style_cached_tokens(self):
+        body = {
+            "model": "m",
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 1000, "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 600},
+            },
+        }
+        r = _client(lambda _r: httpx.Response(200, json=body)).chat(PROMPT)
+        assert r.cached_tokens == 600
+
+    def test_ledger_cost_applies_cache_hit_price(self):
+        body = {
+            "model": "deepseek-flash",
+            "choices": [{"message": {"content": "{}"}}],
+            "usage": {
+                "prompt_tokens": 1_000_000, "completion_tokens": 1_000_000,
+                "prompt_cache_hit_tokens": 1_000_000,
+            },
+        }
+        ledger = TokenLedger()
+        _client(lambda _r: httpx.Response(200, json=body),
+                ledger=ledger, pricing=PEAK).chat(PROMPT)
+        e = ledger.entries[0]
+        assert e.cached_tokens == 1_000_000
+        assert e.cost_cny == pytest.approx(0.04 + 8.0)
+        assert e.price_table_version == PEAK.version
 
 
 class TestJsonModeGuard:

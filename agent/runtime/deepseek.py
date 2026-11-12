@@ -21,6 +21,7 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_expo
 from .config import LLMSettings
 from .ledger import LedgerEntry, Pricing, TokenLedger
 from .llm import LLMResponse
+from .pricing import select_pricing
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
@@ -62,7 +63,8 @@ class DeepSeekClient:
     settings: LLMSettings = field(default_factory=LLMSettings)
     api_key: Optional[str] = None
     ledger: Optional[TokenLedger] = None
-    pricing: Pricing = field(default_factory=Pricing)
+    # 不传则按调用时刻自动选高峰/空闲价
+    pricing: Optional[Pricing] = None
 
     # 测试注入点
     transport: Optional[httpx.BaseTransport] = None
@@ -77,6 +79,10 @@ class DeepSeekClient:
     def __post_init__(self):
         if self.api_key is None:
             self.api_key = self.settings.api_key()
+
+    def _active_pricing(self) -> Pricing:
+        """显式注入的价目优先；否则按每次调用时刻取档，跨时段也不会串价。"""
+        return self.pricing or select_pricing()
 
     # ------------------------------------------------------------------ 调用
     def chat(
@@ -104,13 +110,14 @@ class DeepSeekClient:
             self._write_ledger(
                 stage=stage, run_id=run_id, dialogue_key=dialogue_key,
                 input_tokens=hit.input_tokens, output_tokens=hit.output_tokens,
+                cached_tokens=hit.cached_tokens,
                 latency_ms=0, retries=0, http_status=200, cached=True,
                 request_hash=req_hash,
             )
             return LLMResponse(
                 text=hit.text, model=hit.model,
                 input_tokens=hit.input_tokens, output_tokens=hit.output_tokens,
-                cached=True, latency_ms=0,
+                cached=True, latency_ms=0, cached_tokens=hit.cached_tokens,
             )
 
         attempts = {"n": 0}
@@ -133,8 +140,8 @@ class DeepSeekClient:
             latency_ms = int((time.monotonic() - t0) * 1000)
             self._write_ledger(
                 stage=stage, run_id=run_id, dialogue_key=dialogue_key,
-                input_tokens=0, output_tokens=0, latency_ms=latency_ms,
-                retries=attempts["n"],
+                input_tokens=0, output_tokens=0, cached_tokens=0,
+                latency_ms=latency_ms, retries=attempts["n"],
                 http_status=getattr(e, "status", None), cached=False,
                 request_hash=req_hash, ok=False, error_type=type(e).__name__,
             )
@@ -146,13 +153,14 @@ class DeepSeekClient:
         self._write_ledger(
             stage=stage, run_id=run_id, dialogue_key=dialogue_key,
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
+            cached_tokens=result.cached_tokens,
             latency_ms=latency_ms, retries=attempts["n"],
             http_status=resp.status_code, cached=False, request_hash=req_hash,
         )
         return LLMResponse(
             text=result.text, model=result.model,
             input_tokens=result.input_tokens, output_tokens=result.output_tokens,
-            cached=False, latency_ms=latency_ms,
+            cached=False, latency_ms=latency_ms, cached_tokens=result.cached_tokens,
         )
 
     # ------------------------------------------------------------------ 内部
@@ -213,13 +221,28 @@ class DeepSeekClient:
             model=data.get("model") or self.settings.model,
             input_tokens=int(usage.get("prompt_tokens") or 0),
             output_tokens=int(usage.get("completion_tokens") or 0),
+            cached_tokens=self._cache_hit_tokens(usage),
         )
 
+    @staticmethod
+    def _cache_hit_tokens(usage: Dict[str, Any]) -> int:
+        """DeepSeek 用 prompt_cache_hit_tokens；兼容 OpenAI 风格的 details.cached_tokens。"""
+        hit = usage.get("prompt_cache_hit_tokens")
+        if hit is None:
+            details = usage.get("prompt_tokens_details") or {}
+            hit = details.get("cached_tokens")
+        try:
+            return int(hit or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def _write_ledger(self, *, stage, run_id, dialogue_key, input_tokens,
-                      output_tokens, latency_ms, retries, http_status, cached,
-                      request_hash, ok=True, error_type=None) -> None:
+                      output_tokens, cached_tokens, latency_ms, retries,
+                      http_status, cached, request_hash, ok=True,
+                      error_type=None) -> None:
         if self.ledger is None:
             return
+        pricing = self._active_pricing()
         self._seq += 1
         self.ledger.record(LedgerEntry(
             run_id=run_id,
@@ -228,14 +251,15 @@ class DeepSeekClient:
             stage=stage,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
             model=self.settings.model,
             provider=self.settings.provider,
             latency_ms=latency_ms,
             retries=retries,
             http_status=http_status,
             cached=cached,
-            cost_cny=self.pricing.cost(input_tokens, output_tokens),
-            price_table_version=self.pricing.version,
+            cost_cny=pricing.cost(input_tokens, output_tokens, cached_tokens),
+            price_table_version=pricing.version,
             request_hash=request_hash,
             ok=ok,
             error_type=error_type,
