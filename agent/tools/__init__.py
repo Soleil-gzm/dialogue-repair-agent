@@ -8,10 +8,11 @@ from typing import List
 
 from agent.runtime.registry import ToolRegistry
 
+from .check_coherence import CHECK_COHERENCE
 from .check_consistency import CHECK_CONSISTENCY
 from .fallback_keep import FALLBACK_KEEP
 
-DEFAULT_TOOLS = [CHECK_CONSISTENCY, FALLBACK_KEEP]
+DEFAULT_TOOLS = [CHECK_CONSISTENCY, CHECK_COHERENCE, FALLBACK_KEEP]
 
 
 def register_all() -> List[str]:
@@ -29,4 +30,4 @@ def register_all() -> List[str]:
     return registered
 
 
-__all__ = ["DEFAULT_TOOLS", "register_all", "CHECK_CONSISTENCY"]
+__all__ = ["DEFAULT_TOOLS", "register_all", "CHECK_COHERENCE", "CHECK_CONSISTENCY"]

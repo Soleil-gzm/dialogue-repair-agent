@@ -19,8 +19,10 @@ benchmark/baseline/lock_changelog.md
 eval/__init__.py
 eval/entities.py
 eval/rules.py
+eval/coherence.py
 tools/__init__.py
 tools/check_consistency.py
+tools/check_coherence.py
 tools/fallback_keep.py
 runtime/__init__.py
 runtime/llm.py
@@ -45,6 +47,9 @@ tests/test_fake_llm.py
 tests/test_entities.py
 tests/test_rules.py
 tests/test_check_consistency.py
+tests/test_check_coherence.py
+tests/test_coherence.py
+tests/test_coherence_metrics.py
 tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_budget.py
