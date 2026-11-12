@@ -1,0 +1,49 @@
+# Agent 方向设计文档索引
+
+本目录统一归档 Agent 相关设计文档。**新文档一律放这里**，不再散落到 `docs/` 根目录。
+
+## 文档清单与权威顺序
+
+| 顺序 | 文档 | 状态 | 定位 |
+|---|---|---|---|
+| ① 权威 | [Benchmark专项设计方案.md](Benchmark专项设计方案.md) | v1.0 现行 | **基线对比标准、指标体系、统计判定、产物规格的唯一来源** |
+| ② 权威 | [数据策略评估与决策.md](数据策略评估与决策.md) | v1.0 现行 | **开源展示数据与 Benchmark 数据集选型的决策依据**（双轨制） |
+| ③ 权威 | [数据格式适配与兼容规范.md](数据格式适配与兼容规范.md) | v1.0 现行 | **冻结契约、统一适配层、差异分级、四条可比性门禁** |
+| ④ 权威 | [Agent化改造总纲与Benchmark方案.md](Agent化改造总纲与Benchmark方案.md) | v1.1 现行 | 现状评估、可插拔架构、开源边界、token 计量、求职适配 |
+| ⑤ 参考 | [Agent化技术评估与落地方案.md](Agent化技术评估与落地方案.md) | v1.0 归档 | 早期事实核验与路线评估；结论已被 ④ 继承 |
+| ⑥ 想法池 | [对话数据Agent化改进计划书.md](对话数据Agent化改进计划书.md) | v0.1 归档 | 原始构想与分阶段设想；日期计划已废弃，仅保留思路 |
+
+**冲突处理**：① > ② > ③ > ④ > ⑤ > ⑥。低优先级文档中的冲突表述不再修改，以高优先级为准。
+
+## 已确认的关键决策（速查）
+
+| # | 决策 |
+|---|---|
+| X1 | RAG 移出本期范围，只留接口与开关 |
+| X2 | 主项目整体不开源；agent 模块领域无关，可独立开源（Apache-2.0） |
+| X3 | token 全量留存（append-only ledger），只计量不管控；成本策略延后 |
+| X4 | 先补测试（T0）与基线（T1），再动 Agent 代码 |
+| X5 | Benchmark 基线标准独立成文；agent 文档统一归档本目录 |
+| X6 | 数据双轨：公开轨用程序化构造集（换业务域），私有轨用现网脱敏抽样；现网数据仅贡献统计画像与一次性外部效度检验 |
+| X7 | 换域后格式/字段/类型完全冻结不变，元数据只增不改；benchmark 与生产共用同一 adapter，基线指纹扩为四元组 |
+| X8 | C3（结构降级 + role 推断）仅限私有轨；生产需要放宽时走 §3.4 流程（确定性 RoleMap、100% 准确率、升 major 版本） |
+
+## 里程碑
+
+`T0 测试地基 → T1 基线冻结 → M0 插件骨架 → M1 单工具 → M2 循环 → M3 真实调用 → M4 开源切片 → M5 作品集`
+
+| 阶段 | 状态 | 交付 |
+|---|---|---|
+| T0 测试地基 | ✅ 完成 | `tests/{unit,contract,integration,snapshot}`，85 项通过 |
+| T1 基线冻结 | ✅ 完成 | `agent/benchmark/`：四元组指纹、不可变 lock、A0/A1 对照臂、`baseline/baseline_lock.json` |
+| M0 及以后 | ⬜ 待开始 | 见总纲 §5.5 门禁 |
+
+**T1 复现命令**
+
+```powershell
+python -m agent.benchmark.fixtures --n 12 --seed 20261112     # 生成公开轨 fixture
+python -m agent.benchmark.run --input fixtures/public/base_v1.json --arms A0,A1
+python -m agent.benchmark.run --input fixtures/public/base_v1.json --arms A0,A1 --verify
+```
+
+门禁细则见总纲 §5.5。

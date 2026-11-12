@@ -1,0 +1,602 @@
+[
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0000\n## 订单编号\nORD-927955\n## 产品名称\n示例产品甲\n## 场景标签\nS1_咨询\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n2531.36\n"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0001\n## 订单编号\nORD-958756\n## 产品名称\n示例产品乙\n## 场景标签\nS2_催办\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n3674.15\n"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0002\n## 订单编号\nORD-733398\n## 产品名称\n示例产品丙\n## 场景标签\nS3_退换\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n4889.06\n"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0003\n## 订单编号\nORD-556516\n## 产品名称\n示例产品甲\n## 场景标签\nS4_投诉\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n1777.05\n"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0004\n## 订单编号\nORD-669294\n## 产品名称\n示例产品乙\n## 场景标签\nS5_回访\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n1045.51\n"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0005\n## 订单编号\nORD-617647\n## 产品名称\n示例产品丙\n## 场景标签\nS1_咨询\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n2160.41\n"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0006\n## 订单编号\nORD-644909\n## 产品名称\n示例产品甲\n## 场景标签\nS2_催办\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n1529.53\n"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0007\n## 订单编号\nORD-653759\n## 产品名称\n示例产品乙\n## 场景标签\nS3_退换\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n3442.00\n"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0008\n## 订单编号\nORD-802959\n## 产品名称\n示例产品丙\n## 场景标签\nS4_投诉\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n604.65\n"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0009\n## 订单编号\nORD-117256\n## 产品名称\n示例产品甲\n## 场景标签\nS5_回访\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n554.85\n"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0010\n## 订单编号\nORD-990095\n## 产品名称\n示例产品乙\n## 场景标签\nS1_咨询\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n954.49\n"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      }
+    ]
+  },
+  {
+    "messages": [
+      {
+        "role": "system",
+        "content": "# 角色\n售后回访专员\n## 客户编号\nCUST-0011\n## 订单编号\nORD-410115\n## 产品名称\n示例产品丙\n## 场景标签\nS2_催办\n## 客服电话\n400-000-0000\n## 联系时间\n2026-11-12 10:00:00\n## 订单金额\n260.92\n"
+      },
+      {
+        "role": "user",
+        "content": "能不能给个大概时间？"
+      },
+      {
+        "role": "assistant",
+        "content": "稍后会有短信通知，请留意。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我上周下的单，现在还没收到。"
+      },
+      {
+        "role": "assistant",
+        "content": "已为您查询，订单正在分拣中。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "这个型号和页面写的不一样。"
+      },
+      {
+        "role": "assistant",
+        "content": "您反馈的问题我记录下来了，会转给对应同事。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "我想问下能不能换货。"
+      },
+      {
+        "role": "assistant",
+        "content": "换货需要保持包装完整，我帮您登记。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "已经等很久了，麻烦帮我催一下。"
+      },
+      {
+        "role": "assistant",
+        "content": "我已为您催办，预计两个工作日内有进展。",
+        "loss": "True"
+      },
+      {
+        "role": "user",
+        "content": "收到的包装有点破损。"
+      },
+      {
+        "role": "assistant",
+        "content": "很抱歉给您带来不便，我这边同步处理。",
+        "loss": "True"
+      }
+    ]
+  }
+]

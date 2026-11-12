@@ -1,0 +1,44 @@
+{
+  "adapter": {
+    "adapter_version": "1.0.0",
+    "canonical_schema_version": "1.0",
+    "domain_profile": "public_after_sales",
+    "domain_profile_hash": "a98e6dbe0e20cba9821839ea9ff7d8d5c23c6b492f3fcb1e83516367e8e0c065",
+    "sha256": "b1eed844f1aaec172bbe7b1a335298e685a5c66ee096feca5e32fb9d6f919544"
+  },
+  "arms": {
+    "A0": {
+      "artifact_sha256": "200527793cf114b40a9764eafa3b3dde3e66caf6ab0fac95c0e7ee5bdb0e9c4a",
+      "config_sha256": "e19b08cc40cd66b986d03af75d083732a15d710f5df2b1067c5966e912146e52",
+      "prompt_version": null
+    },
+    "A1": {
+      "artifact_sha256": "c47675fc7252fb9ebacbc24917cfcc5157ba54ee978450c7c88adf544a5e0487",
+      "config_sha256": "7d9c37ca786fb29ba318c08b582003323709f9687690e4620b33c0934a0a1362",
+      "prompt_version": null
+    }
+  },
+  "code": {
+    "dirty": true,
+    "git_commit": "c382eaca7dbb15d01e35387c61c6942ff07cc819"
+  },
+  "evaluator": {
+    "judge_model": "deepseek-chat",
+    "judge_prompt_version": "v1",
+    "judge_temperature": 0.0,
+    "rubric_version": "1.0",
+    "rules_version": "1.0.0",
+    "sha256": "bc0259a80177595904ebe9395e793e411f75b5728b48c050a55b668ad3d314d8"
+  },
+  "input": {
+    "n_total": 12,
+    "path": "agent/fixtures/public/base_v1.json",
+    "sha256": "fa3371640c9feee94366239cc18dd6505fdd518661fbec5ab55b126ddd937e41"
+  },
+  "lock_version": "1.0",
+  "price_table": {
+    "unit": "CNY/1M tokens",
+    "version": "deepseek_2026-11"
+  },
+  "profile": "standard"
+}
