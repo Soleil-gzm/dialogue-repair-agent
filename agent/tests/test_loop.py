@@ -46,8 +46,8 @@ class TestHappyPath:
         r = AgentRuntime(RulePolicy()).run(mini_dialogues[0])
         assert r.status == ACCEPTED
         assert r.termination == TERM_STOP
-        assert r.tool_calls == 1
-        assert r.iterations == 1
+        assert r.tool_calls == 2  # 保真校验 + 连贯性检查
+        assert r.iterations == 2
         assert r.issues == []
 
     def test_dialogue_unchanged_when_accepted(self, mini_dialogues):
@@ -63,7 +63,7 @@ class TestFallbackPath:
         r = AgentRuntime(RulePolicy()).run(bad, reference=clean)
         assert r.status == FALLBACK
         assert r.termination == TERM_TOOL_TERMINAL
-        assert r.tool_calls == 2
+        assert r.tool_calls == 3  # 两个校验 + 回退
         assert r.issues, "应记录违规明细"
 
     def test_fallback_returns_reference_exactly(self, mini_dialogues):

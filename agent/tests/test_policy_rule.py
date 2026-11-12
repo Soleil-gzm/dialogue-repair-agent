@@ -18,8 +18,10 @@ def _state(dialogue, issues=None, history=None):
 
 
 CHECKED = [{"tool": "check_consistency"}]
-CLEAN_CHECK = CHECKED
-FALLBACK_DONE = [{"tool": "check_consistency"}, {"tool": "fallback_keep"}]
+CLEAN_CHECK = [{"tool": "check_consistency"}, {"tool": "check_coherence"}]
+FALLBACK_DONE = [
+    {"tool": "check_consistency"}, {"tool": "check_coherence"}, {"tool": "fallback_keep"},
+]
 
 
 class TestRulePolicy:
@@ -30,6 +32,13 @@ class TestRulePolicy:
         assert dec.tool == "check_consistency"
         assert dec.args["before"] == d and dec.args["after"] == d
         assert dec.reason
+
+    def test_second_step_is_coherence_check(self, mini_dialogues):
+        d = mini_dialogues[0]
+        dec = RulePolicy().decide(_state(d, history=CHECKED))
+        assert dec.action == ACTION_CALL_TOOL
+        assert dec.tool == "check_coherence"
+        assert dec.args["dialogue"] == d
 
     def test_stops_when_clean(self, mini_dialogues):
         dec = RulePolicy().decide(_state(mini_dialogues[0], history=CLEAN_CHECK))

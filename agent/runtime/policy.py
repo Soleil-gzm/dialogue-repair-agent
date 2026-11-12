@@ -8,7 +8,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, Optional, Protocol, Sequence
 
 ACTION_CALL_TOOL = "call_tool"
 ACTION_STOP = "stop"
@@ -28,26 +28,32 @@ class Policy(Protocol):
 
 
 class RulePolicy:
-    """确定性策略：校验 → 有违规则回退原文，否则接受。
+    """确定性策略：依次校验 → 有违规则回退原文，否则接受。
 
     不依赖 LLM，因此可在离线档位复现；它同时是 M3 自主决策的对照基线。
+    校验链默认"先保真、后连贯"：保真校验是硬约束，任何重写都必须先过。
     """
 
-    def __init__(self, check_tool: str = "check_consistency",
+    def __init__(self,
+                 checks: Sequence[str] = ("check_consistency", "check_coherence"),
                  fallback_tool: str = "fallback_keep"):
-        self._check = check_tool
+        self._checks = tuple(checks)
         self._fallback = fallback_tool
 
     def decide(self, state: Any) -> Decision:
         called = state.called_tools()
 
-        # 第一步：校验一致性与实体保真
-        if self._check not in called:
-            return Decision(
-                ACTION_CALL_TOOL, self._check,
-                {"before": state.original, "after": state.dialogue},
-                "先校验结构不变与实体保真",
-            )
+        # 第一步：按链顺序把校验跑完
+        for tool in self._checks:
+            if tool not in called:
+                return Decision(
+                    ACTION_CALL_TOOL, tool,
+                    {"before": state.original, "after": state.dialogue}
+                    if tool == "check_consistency"
+                    else {"dialogue": state.dialogue},
+                    "先校验结构不变与实体保真" if tool == "check_consistency"
+                    else "再校验对话自身连贯性",
+                )
 
         # 第二步：有违规就保留原文（宁可不变，也不能改坏）
         if state.issues and self._fallback not in called:
