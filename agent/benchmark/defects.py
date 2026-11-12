@@ -4,12 +4,16 @@
 同 seed 必然产出同一批数据。
 
 六类缺陷：
-    D1 答非所问   —— 某轮 assistant 换成别的对话的回复
+    D1 答非所问   —— 某轮 assistant 换成与当轮诉求无关的跨话题回复
     D2 指代断裂   —— 删掉前文实体，只留"那个/它"
     D3 事实冲突   —— assistant 引入与 system 不符的金额（凭空新增实体）
     D4 角色混淆   —— 把用户话术塞进 assistant
     D5 重复空转   —— 当前 assistant 复制上一条 assistant
     D6 缺失承接   —— 删掉一轮 assistant 回复
+
+D1 的口径：必须"语义跑题"，而不是"回复换了来源"。早先版本从另一条对话里搬
+同域通用话术，替换后往往仍然说得通（"催一下"→"我这边同步处理"），
+标签本身就带噪声。现在改为替换为跨话题回复池，保证真的答非所问。
 
 用法：
     python -m agent.benchmark.defects --per-type 20 --seed 20261113 --out out.jsonl
@@ -21,7 +25,7 @@ import json
 import random
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 DEFECT_TYPES = [
     "D1_off_topic",
@@ -33,6 +37,17 @@ DEFECT_TYPES = [
 ]
 
 _ID_PATTERN = re.compile(r"\b[A-Z]{2,6}-\d{3,}\b")
+
+# 跨话题回复池：与本域所有客户诉求（物流/换货/催办/破损/时间）都无承接关系。
+# 固定内容 + seed 轮转，保证 D1 标签可复现、语义明确跑题。
+OFF_TOPIC_REPLIES = [
+    "我们的营业时间是每天上午九点到下午六点。",
+    "会员积分可以在下次下单时直接抵扣。",
+    "您可以在门店出示二维码领取赠品。",
+    "这款产品的说明书有中英文两个版本。",
+    "请在十五分钟内完成支付，否则订单会自动关闭。",
+    "我们的仓库已经通过了安全认证。",
+]
 
 
 def _assistant_indices(msgs: List[dict]) -> List[int]:
@@ -47,23 +62,21 @@ def _user_indices(msgs: List[dict]) -> List[int]:
 # 单类注入器：返回 (defective_dialogue, meta)，均不修改原对象
 # --------------------------------------------------------------------------
 
-def inject_d1_off_topic(d: dict, rng: random.Random, donor: dict) -> Tuple[dict, dict]:
+def inject_d1_off_topic(d: dict, rng: random.Random) -> Tuple[dict, dict]:
+    """把某轮 assistant 换成跨话题回复：语义上确定不回应当轮诉求。"""
     out = copy.deepcopy(d)
     a_idx = _assistant_indices(out["messages"])
-    donor_contents = [
-        m.get("content", "") for m in (donor or {}).get("messages", [])
-        if m.get("role") == "assistant"
-    ]
-    # 必须真的换成不同内容，否则是空操作（原回复与 donor 回复撞车）
-    candidates = [
-        (t, c) for t in a_idx for c in donor_contents
-        if c and c != out["messages"][t].get("content")
-    ]
-    if not candidates:
+    if not a_idx:
         return out, {"type": "D1_off_topic", "turn": None, "skipped": True}
-    turn, content = candidates[rng.randrange(len(candidates))]
+    turn = a_idx[rng.randrange(len(a_idx))]
+    # 排除与原文相同的内容，确保注入不是空操作
+    pool = [t for t in OFF_TOPIC_REPLIES if t != out["messages"][turn].get("content")]
+    if not pool:
+        return out, {"type": "D1_off_topic", "turn": None, "skipped": True}
+    content = pool[rng.randrange(len(pool))]
     out["messages"][turn] = {**out["messages"][turn], "content": content}
-    return out, {"type": "D1_off_topic", "turn": turn, "field": "content"}
+    return out, {"type": "D1_off_topic", "turn": turn, "field": "content",
+                 "injected": content}
 
 
 def inject_d2_reference_broken(d: dict, rng: random.Random) -> Tuple[dict, dict]:
@@ -150,28 +163,24 @@ _INJECTORS = {
 }
 
 
-def inject(d: dict, defect_type: str, rng: random.Random,
-           donor: Optional[dict] = None) -> Tuple[dict, dict]:
+def inject(d: dict, defect_type: str, rng: random.Random) -> Tuple[dict, dict]:
     if defect_type not in _INJECTORS:
         raise ValueError(f"未知缺陷类型: {defect_type}")
-    if defect_type == "D1_off_topic":
-        return inject_d1_off_topic(d, rng, donor or {})
     return _INJECTORS[defect_type](d, rng)
 
 
 def generate(dialogues: List[dict], per_type: int = 20,
              seed: int = 20261113) -> List[dict]:
     """按类型均匀生成缺陷样本，返回带标注的记录列表。"""
-    if len(dialogues) < 2:
-        raise ValueError("至少需要 2 条对话（D1 需要 donor）")
+    if not dialogues:
+        raise ValueError("至少需要 1 条对话")
     rng = random.Random(seed)
     records: List[dict] = []
     for t_i, dtype in enumerate(DEFECT_TYPES):
         for k in range(per_type):
             base_i = (t_i * per_type + k) % len(dialogues)
-            donor_i = (base_i + 1) % len(dialogues)
             d = dialogues[base_i]
-            bad, meta = inject(d, dtype, rng, donor=dialogues[donor_i])
+            bad, meta = inject(d, dtype, rng)
             records.append({
                 "sample_key": f"{dtype}-{k:03d}",
                 "dialogue": bad,

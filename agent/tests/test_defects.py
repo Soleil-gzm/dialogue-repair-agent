@@ -11,7 +11,7 @@ import json
 import pytest
 
 from agent.benchmark.defects import (
-    DEFECT_TYPES, generate, inject, to_jsonl,
+    DEFECT_TYPES, OFF_TOPIC_REPLIES, generate, inject, to_jsonl,
 )
 from agent.benchmark.fixtures import generate_dialogues
 from agent.eval.rules import check_consistency
@@ -48,9 +48,10 @@ class TestGenerate:
         generate(dialogues, per_type=2, seed=7)
         assert json.dumps(dialogues, sort_keys=True, ensure_ascii=False) == before
 
-    def test_requires_two_dialogues(self):
-        with pytest.raises(ValueError):
-            generate([generate_dialogues(1, seed=1)[0]], per_type=1)
+    def test_single_dialogue_is_enough(self):
+        """D1 不再依赖 donor 对话，单条样本也能生成全部类型。"""
+        records = generate(dialogues=[generate_dialogues(1, seed=1)[0]], per_type=1)
+        assert len(records) == len(DEFECT_TYPES)
 
     def test_unknown_type_raises(self, dialogues):
         import random
@@ -65,6 +66,18 @@ class TestGenerate:
 
 
 class TestInjectionShapes:
+    def test_d1_replaces_with_cross_topic_reply(self, dialogues):
+        import random
+        bad, meta = inject(dialogues[0], "D1_off_topic", random.Random(1))
+        assert meta.get("skipped") is not True
+        turn = meta["turn"]
+        injected = bad["messages"][turn]["content"]
+        assert injected in OFF_TOPIC_REPLIES
+        assert injected != dialogues[0]["messages"][turn]["content"], "注入不能是空操作"
+        # 与 user 内容相同会变成 D4（角色混淆），两类的判定必须可分
+        assert injected not in {m["content"] for m in bad["messages"]
+                                if m["role"] == "user"}
+
     def test_d2_actually_strips_id(self, dialogues):
         import random
         bad, meta = inject(dialogues[0], "D2_reference_broken", random.Random(1))
