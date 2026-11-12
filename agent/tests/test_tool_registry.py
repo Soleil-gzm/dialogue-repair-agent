@@ -1,6 +1,7 @@
 """测试：工具注册表契约
 
 工具必须可脱离 LLM 单测，因此注册表本身零依赖、纯内存。
+注册表的隔离由 conftest.py 的 autouse fixture 统一负责。
 """
 
 import pytest
@@ -12,13 +13,6 @@ from agent.runtime.registry import (
 
 def _noop(state, args):
     return {"ok": True, "args": args}
-
-
-@pytest.fixture(autouse=True)
-def isolated_registry():
-    snap = ToolRegistry.snapshot()
-    yield
-    ToolRegistry.restore(snap)
 
 
 def _tool(name="check_x", **overrides):
@@ -90,3 +84,15 @@ class TestInvoke:
         ToolRegistry.register(_tool(name="bad", fn=lambda s, a: "not-a-dict"))
         with pytest.raises(ToolContractError):
             ToolRegistry.invoke("bad")
+
+
+class TestRegistryIsolation:
+    """证明 conftest 的 autouse fixture 真的生效（依赖用例执行顺序）。"""
+
+    def test_register_here(self):
+        ToolRegistry.register(_tool(name="leak_probe"))
+        assert "leak_probe" in ToolRegistry.list_tools()
+
+    def test_should_be_clean_here(self):
+        assert "leak_probe" not in ToolRegistry.list_tools(), \
+            "注册表在用例间泄漏，conftest 的隔离 fixture 失效"

@@ -31,6 +31,24 @@ def update_snapshots(request):
     return request.config.getoption("--update-snapshots")
 
 
+# ---------------------------------------------------------------------------
+# 全局隔离
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def isolated_tool_registry():
+    """每个用例前后恢复工具注册表。
+
+    ToolRegistry 是类级共享状态：某个用例注册的工具会泄漏到后续用例，
+    表现为"单跑通过、全量失败"。统一在此隔离，避免各测试文件各自实现。
+    """
+    from agent.runtime.registry import ToolRegistry
+
+    snap = ToolRegistry.snapshot()
+    yield
+    ToolRegistry.restore(snap)
+
+
 @pytest.fixture
 def mini_dialogues():
     """3 条合成对话（中立域，可公开）。"""
