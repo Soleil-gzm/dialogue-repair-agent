@@ -9,8 +9,9 @@ from typing import List
 from agent.runtime.registry import ToolRegistry
 
 from .check_consistency import CHECK_CONSISTENCY
+from .fallback_keep import FALLBACK_KEEP
 
-DEFAULT_TOOLS = [CHECK_CONSISTENCY]
+DEFAULT_TOOLS = [CHECK_CONSISTENCY, FALLBACK_KEEP]
 
 
 def register_all() -> List[str]:
