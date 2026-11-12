@@ -20,6 +20,7 @@ eval/__init__.py
 eval/entities.py
 eval/rules.py
 eval/coherence.py
+eval/judge.py
 tools/__init__.py
 tools/check_consistency.py
 tools/check_coherence.py
@@ -50,6 +51,7 @@ tests/test_check_consistency.py
 tests/test_check_coherence.py
 tests/test_coherence.py
 tests/test_coherence_metrics.py
+tests/test_judge.py
 tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_budget.py
