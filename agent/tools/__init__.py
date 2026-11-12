@@ -8,21 +8,26 @@ from typing import List
 
 from agent.runtime.registry import ToolRegistry
 
-from .check_coherence import CHECK_COHERENCE
+from .check_coherence import CHECK_COHERENCE, make_check_coherence
 from .check_consistency import CHECK_CONSISTENCY
 from .fallback_keep import FALLBACK_KEEP
 
 DEFAULT_TOOLS = [CHECK_CONSISTENCY, CHECK_COHERENCE, FALLBACK_KEEP]
 
 
-def register_all() -> List[str]:
+def register_all(judge=None) -> List[str]:
     """注册全部默认工具，返回实际注册的工具名。
 
     幂等：已注册的工具会跳过，便于重复调用。
+    judge 不为空时，用带语义判官的 check_coherence 替换默认版本（在线档位）。
     """
+    tools = list(DEFAULT_TOOLS)
+    if judge is not None:
+        tools[1] = make_check_coherence(judge=judge)
+
     registered = []
     existing = set(ToolRegistry.list_tools())
-    for tool in DEFAULT_TOOLS:
+    for tool in tools:
         if tool.name in existing:
             continue
         ToolRegistry.register(tool)

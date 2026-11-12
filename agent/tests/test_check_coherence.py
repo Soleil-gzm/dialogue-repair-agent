@@ -28,6 +28,14 @@ class TestRegistration:
         params = specs["check_coherence"]["function"]["parameters"]
         assert set(params["required"]) == {"dialogue"}
 
+    def test_register_all_with_judge(self):
+        """在线档位：判官随工具一起注册，调用链不变。"""
+        register_all(judge=lambda _d: [{"rule": "C3_off_topic", "detail": "跑题", "turn": 0}])
+        out = ToolRegistry.invoke("check_coherence",
+                                  args={"dialogue": _dialogue("今天天气不错。")})
+        assert out["ok"] is False
+        assert out["violations"][0]["rule"] == "C3_off_topic"
+
 
 class TestInvoke:
     def test_clean_dialogue_ok(self):
