@@ -11,7 +11,7 @@ import pytest
 from agent.benchmark.defects import inject
 from agent.runtime.budget import Budget
 from agent.runtime.llm import LLMResponse
-from agent.runtime.loop import ACCEPTED, FALLBACK, AgentRuntime
+from agent.runtime.loop import ACCEPTED, FALLBACK, STOPPED, AgentRuntime
 from agent.runtime.policy import (
     ACTION_CALL_TOOL, ACTION_STOP, LLMPolicy, LLMPolicyError,
 )
@@ -31,6 +31,7 @@ class _StubClient:
         item = self._responses.pop(0) if self._responses else {}
         return LLMResponse(
             text=item.get("text", ""),
+            input_tokens=item.get("tokens", 0),
             tool_calls=item.get("tool_calls", []),
         )
 
@@ -161,6 +162,26 @@ class TestRequestShape:
         user = client.calls[0]["messages"][1]["content"]
         assert "check_consistency(有违规)" in user
         assert "R3_entity_fidelity" in user
+
+
+class TestTokenAccounting:
+    def test_decide_reports_usage_to_state(self, mini_dialogues):
+        state = _state(mini_dialogues[0])
+        LLMPolicy(_StubClient({"text": "ok", "tokens": 400})).decide(state)
+        assert state.drain_tokens() == 400
+        assert state.drain_tokens() == 0, "同一笔用量不能重复入账"
+
+    def test_budget_stops_between_decisions(self, mini_dialogues):
+        """决策花的 token 超过上限后，下一轮必须先停，不能再发请求。"""
+        client = _StubClient(
+            {"tool_calls": [{"name": "check_consistency"}], "tokens": 300},
+            {"tool_calls": [{"name": "check_coherence"}], "tokens": 300},
+        )
+        r = AgentRuntime(LLMPolicy(client), budget=Budget(max_tokens=100)).run(mini_dialogues[0])
+        assert r.status == STOPPED
+        assert r.tool_calls == 1
+        assert len(client.calls) == 1
+        assert r.tokens == 300
 
 
 class TestIntegrationWithLoop:

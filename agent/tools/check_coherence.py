@@ -32,12 +32,19 @@ def make_check_coherence(judge: Optional[Judge] = None) -> FunctionTool:
                 "ok": False,
                 "violations": [{"rule": "C0_input_contract",
                                 "detail": "dialogue 必须是对话对象", "turn": None}],
+                "tokens": 0,
             }
+
+        # 判官内部也会调模型：把本次消耗的增量回传给 loop，才能计入 token 预算
+        used_before = int(getattr(judge, "tokens_used", 0) or 0)
         violations = check_coherence(dialogue, judge=judge)
+        used_after = int(getattr(judge, "tokens_used", used_before) or used_before)
+
         return {
             "ok": not violations,
             "violation_count": len(violations),
             "violations": violations,
+            "tokens": max(0, used_after - used_before),
         }
 
     return FunctionTool(

@@ -112,6 +112,8 @@ class LLMJudge:
     stage: str = "judge"
     run_id: str = "adhoc"
     extra: Dict[str, Any] = field(default_factory=dict)
+    # 累计用量：工具据此回传本次调用的增量，让 loop 的 token 预算覆盖判官消耗
+    tokens_used: int = 0
 
     def __call__(self, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
         payload = [{"role": "system", "content": SYSTEM_PROMPT},
@@ -126,6 +128,7 @@ class LLMJudge:
             run_id=self.run_id,
             dialogue_key=_dialogue_key(dialogue) if isinstance(dialogue, dict) else "",
         )
+        self.tokens_used += resp.total_tokens
 
         violations = parse_verdict(resp.text, dialogue)
         for v in violations:

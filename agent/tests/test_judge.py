@@ -119,6 +119,17 @@ class TestLLMJudge:
             _judge_returning("我无法判断")(_dialogue("你好", "您好"))
 
 
+class TestTokenAccounting:
+    def test_tokens_used_accumulates(self):
+        judge = LLMJudge(client=FakeLLMClient(default='{"issues": []}'))
+        d = _dialogue("你好", "您好")
+        judge(d)
+        first = judge.tokens_used
+        assert first > 0
+        judge(d)
+        assert judge.tokens_used == first * 2
+
+
 class TestIntegrationWithCheckCoherence:
     def test_judge_issue_blocks_dialogue(self):
         judge = _judge_returning('{"issues": [{"turn": 1, "detail": "答的是换货"}]}')

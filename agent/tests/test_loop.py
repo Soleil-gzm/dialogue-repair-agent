@@ -18,7 +18,8 @@ from agent.runtime.loop import (
     ACCEPTED, FALLBACK, FAILED, STOPPED, AgentRuntime,
     TERM_LOOP_DETECTED, TERM_STOP, TERM_TOOL_TERMINAL,
 )
-from agent.runtime.policy import ACTION_CALL_TOOL, Decision, RulePolicy
+from agent.runtime.policy import ACTION_CALL_TOOL, ACTION_STOP, Decision, RulePolicy
+from agent.runtime.registry import FunctionTool, ToolRegistry
 from agent.runtime.trace import TraceWriter
 from agent.tools import register_all
 
@@ -85,6 +86,61 @@ class TestBudgetGuards:
         r = AgentRuntime(RulePolicy(), budget=Budget(max_tool_calls=1)).run(bad, reference=clean)
         assert r.status == STOPPED
         assert r.tool_calls == 1
+
+
+def _burning_tool(tokens: int = 500) -> FunctionTool:
+    return FunctionTool(
+        name="burn_tokens",
+        description="测试用：只上报 token 消耗",
+        schema={"type": "object", "properties": {}},
+        fn=lambda _state, _args: {"ok": True, "tokens": tokens},
+    )
+
+
+class _BurningPolicy:
+    """每次决策自报一定 token 用量，用来验证预算是真的在管。"""
+
+    def __init__(self, tokens_per_decide: int = 0):
+        self.tokens = tokens_per_decide
+
+    def decide(self, state):
+        state.add_tokens(self.tokens)
+        return Decision(ACTION_CALL_TOOL, "burn_tokens", {}, "花 token")
+
+
+class TestTokenBudget:
+    def test_tool_reported_tokens_exhaust_budget(self, mini_dialogues):
+        ToolRegistry.register(_burning_tool(500))
+        r = AgentRuntime(_BurningPolicy(), budget=Budget(max_tokens=100)).run(mini_dialogues[0])
+        assert r.status == STOPPED
+        assert r.tokens == 500
+
+    def test_policy_tokens_exhaust_budget(self, mini_dialogues):
+        """策略自己调模型的消耗也要占预算，否则上限形同虚设。"""
+        ToolRegistry.register(_burning_tool(0))
+        r = AgentRuntime(_BurningPolicy(500), budget=Budget(max_tokens=100)).run(mini_dialogues[0])
+        assert r.status == STOPPED
+        assert r.tokens == 500
+        assert r.tool_calls == 1, "第一次调用后即应触顶，不再有第二次"
+
+    def test_stop_decision_still_reports_usage(self, mini_dialogues):
+        class _SpendThenStop:
+            def decide(self, state):
+                state.add_tokens(120)
+                return Decision(ACTION_STOP, reason="结束")
+
+        r = AgentRuntime(_SpendThenStop()).run(mini_dialogues[0])
+        assert r.status == ACCEPTED
+        assert r.tokens == 120
+
+    def test_drain_is_one_shot(self, mini_dialogues):
+        from agent.runtime.state import AgentState
+
+        s = AgentState(dialogue=mini_dialogues[0], original=mini_dialogues[0])
+        s.add_tokens(10)
+        s.add_tokens(5)
+        assert s.drain_tokens() == 15
+        assert s.drain_tokens() == 0
 
 
 class TestLoopDetection:

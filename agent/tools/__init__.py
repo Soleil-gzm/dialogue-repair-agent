@@ -1,7 +1,10 @@
 """可注册工具集
 
-工具必须：纯函数、无 I/O、无网络、不依赖 LLM —— 这样可脱离模型单测，
+默认工具必须：纯函数、无 I/O、无网络、不依赖 LLM —— 这样可脱离模型单测，
 也才能在 benchmark 的离线档位里跑出确定性结果。
+
+唯一例外是 check_coherence 注入语义判官时：判官会调模型，因此工具要把本次
+token 增量回传给 loop，token 预算才算得准。
 """
 
 from typing import List

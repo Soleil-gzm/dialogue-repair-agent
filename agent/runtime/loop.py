@@ -122,6 +122,9 @@ class AgentRuntime:
                 "reason": decision.reason,
             })
 
+            # 策略自身的模型调用也要占预算，否则"token 上限"形同虚设
+            state.budget.consume(tokens=state.drain_tokens())
+
             if decision.action == ACTION_STOP:
                 termination, reason = TERM_STOP, decision.reason
                 break

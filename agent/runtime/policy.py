@@ -112,6 +112,7 @@ class LLMPolicy:
             run_id=self.run_id,
             dialogue_key=state.key,
         )
+        state.add_tokens(resp.total_tokens)
 
         if resp.tool_calls:
             call = resp.tool_calls[0]

@@ -3,6 +3,8 @@
 工具层只做参数校验与封装；规则正确性见 test_coherence。
 """
 
+from agent.eval.judge import LLMJudge
+from agent.runtime.llm import FakeLLMClient
 from agent.runtime.registry import ToolRegistry
 from agent.tools import DEFAULT_TOOLS, CHECK_COHERENCE, register_all
 from agent.tools.check_coherence import make_check_coherence
@@ -62,6 +64,20 @@ class TestInvoke:
         out = ToolRegistry.invoke("check_coherence", args={"dialogue": "oops"})
         assert out["ok"] is False
         assert out["violations"][0]["rule"] == "C0_input_contract"
+
+
+class TestTokenReporting:
+    def test_zero_tokens_without_judge(self):
+        out = CHECK_COHERENCE(None, {"dialogue": _dialogue("已为您查询。")})
+        assert out["tokens"] == 0
+
+    def test_reports_judge_usage_delta(self):
+        """判官调模型的消耗要回传给 loop，否则 token 预算管不到它。"""
+        judge = LLMJudge(client=FakeLLMClient(default='{"issues": []}'))
+        tool = make_check_coherence(judge)
+        out = tool(None, {"dialogue": _dialogue("今天天气不错。")})
+        assert out["tokens"] > 0
+        assert out["tokens"] == judge.tokens_used
 
 
 class TestJudgeInjection:

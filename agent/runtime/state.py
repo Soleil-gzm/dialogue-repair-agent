@@ -31,6 +31,23 @@ class AgentState:
     status: str = STATUS_RUNNING
     result_dialogue: Optional[Dict[str, Any]] = None
 
+    # 策略自报的 token 用量：由循环在决策后入账，避免"模型调用不占预算"
+    _pending_tokens: int = 0
+
+    def add_tokens(self, n: int) -> None:
+        """记录一次模型调用消耗的 token（失败调用也应计，成本口径才不漏）。"""
+        try:
+            n = int(n)
+        except (TypeError, ValueError):
+            return
+        if n > 0:
+            self._pending_tokens += n
+
+    def drain_tokens(self) -> int:
+        """取走待入账用量，保证同一笔不会被重复计费。"""
+        n, self._pending_tokens = self._pending_tokens, 0
+        return n
+
     @property
     def key(self) -> str:
         """以候选内容为键：同一份原始数据的不同候选应各自独立。"""
