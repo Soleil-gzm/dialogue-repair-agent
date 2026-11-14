@@ -89,6 +89,20 @@ class TestFigures:
         assert "check_consistency" in svg
         assert svg.count("<circle") == 3
 
+    def test_before_after_svg(self):
+        from agent.benchmark.report import before_after_svg
+
+        case = {"title": "答非所问", "user": "催一下", "candidate": "请先付款",
+                "original": "已为您催办", "verdict": "C3_off_topic"}
+        svg = before_after_svg(case)
+        assert "答非所问" in svg and "请先付款" in svg and "已为您催办" in svg
+        assert "C3_off_topic" in svg
+
+    def test_before_after_block_in_html(self):
+        report = summarize(_arms(), [])
+        html = render_html(report, "", "", trace_svg([]), "<svg></svg>")
+        assert "Before / After" in html
+
     def test_figures_are_deterministic(self):
         assert ablation_svg(_arms()) == ablation_svg(_arms())
         assert trace_svg(TRACE) == trace_svg(TRACE)

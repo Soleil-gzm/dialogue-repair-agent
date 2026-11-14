@@ -253,6 +253,44 @@ def trace_svg(records: List[Dict[str, Any]], width: int = 760, height: int = 240
     return "\n".join(parts)
 
 
+def _wrap(text: str, width: int) -> List[str]:
+    """按字符数硬折行：中文没有空格，宽度按"字"算比按词更稳。"""
+    text = str(text or "")
+    return [text[i:i + width] for i in range(0, len(text), width)] or [""]
+
+
+def before_after_svg(case: Dict[str, Any], width: int = 760, height: int = 320) -> str:
+    """Before/After 对照：受损候选 vs Agent 输出，标注判定理由。"""
+    rows = [
+        ("用户诉求", case.get("user", ""), "#495057", "#f1f3f5"),
+        ("受损候选（注入缺陷）", case.get("candidate", ""), "#e03131", "#fff5f5"),
+        ("Agent 输出（回退原文）", case.get("original", ""), "#12b886", "#ebfbee"),
+    ]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}" font-family="Segoe UI, Noto Sans SC, sans-serif">',
+        f'<rect width="{width}" height="{height}" fill="#ffffff"/>',
+        f'<text x="20" y="24" font-size="14" fill="#333">'
+        f'{html_escape(case.get("title", "Before / After"))}</text>',
+    ]
+    y = 44
+    for label, text, color, bg in rows:
+        lines = _wrap(text, 34)
+        h = 26 + 20 * len(lines)
+        parts.append(f'<rect x="20" y="{y}" width="{width - 40}" height="{h}" fill="{bg}" rx="6"/>')
+        parts.append(f'<text x="34" y="{y + 20}" font-size="12" fill="{color}">'
+                     f'{html_escape(label)}</text>')
+        for i, line in enumerate(lines):
+            parts.append(f'<text x="34" y="{y + 40 + i * 20}" font-size="13" '
+                         f'fill="#343a40">{html_escape(line)}</text>')
+        y += h + 12
+    if case.get("verdict"):
+        parts.append(f'<text x="20" y="{height - 16}" font-size="12" fill="#868e96">'
+                     f'判定：{html_escape(case["verdict"])}</text>')
+    parts.append('</svg>')
+    return "\n".join(parts)
+
+
 def html_escape(s: Any) -> str:
     return (str(s).replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
@@ -329,7 +367,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: str) -> str:
+def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: str,
+                before_after: str = "") -> str:
     meta = report["meta"]
     arms = report["arms"]
     defects = meta["defect_types"]
@@ -349,6 +388,9 @@ def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: s
             f"<td>{arm.get('tokens', 0):,}</td><td>¥{arm.get('cost_cny', 0):.2f}</td></tr>")
 
     conclusions = "".join(f"<li>{html_escape(c)}</li>" for c in report["conclusions"])
+    before_after_block = ""
+    if before_after:
+        before_after_block = f'<h2>3.1 Before / After</h2><div class="card">{before_after}</div>'
     notes = correction_notes(report)
     corrections_block = ""
     if notes:
@@ -390,6 +432,7 @@ pre{{background:#212529;color:#f8f9fa;padding:14px;border-radius:8px;overflow:au
 
 <h2>3. 决策链</h2>
 <div class="card">{timeline}</div>
+{before_after_block}
 
 <h2>4. 明细</h2>
 <div class="card"><table>
@@ -424,6 +467,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.benchmark.report")
     ap.add_argument("--results", required=True, help="ablation_*.json 文件或所在目录")
     ap.add_argument("--trace", default="", help="trace jsonl（可选）")
+    ap.add_argument("--case", default="", help="before/after 案例 json（可选）")
     ap.add_argument("--out", required=True, help="报告输出目录")
     args = ap.parse_args(argv)
 
@@ -442,16 +486,22 @@ def main(argv=None) -> int:
     ablation = ablation_svg(arms)
     heatmap = heatmap_svg(arms)
     timeline = trace_svg(trace)
+    before_after = ""
+    if args.case:
+        case = json.loads(Path(args.case).read_text(encoding="utf-8"))
+        before_after = before_after_svg(case)
 
     (fig_dir / "01_ablation.svg").write_text(ablation + "\n", encoding="utf-8")
     (fig_dir / "02_heatmap.svg").write_text(heatmap + "\n", encoding="utf-8")
     (fig_dir / "03_trace_timeline.svg").write_text(timeline + "\n", encoding="utf-8")
+    if before_after:
+        (fig_dir / "04_before_after.svg").write_text(before_after + "\n", encoding="utf-8")
 
     (out / "benchmark_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (out / "benchmark_report.md").write_text(render_markdown(report), encoding="utf-8")
     (out / "benchmark_report.html").write_text(
-        render_html(report, ablation, heatmap, timeline), encoding="utf-8")
+        render_html(report, ablation, heatmap, timeline, before_after), encoding="utf-8")
 
     print(f"[OK] 报告 -> {out}")
     return 0
