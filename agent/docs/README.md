@@ -40,7 +40,8 @@
 | M1 单工具 | ✅ 完成 | 五条硬约束（R1–R5）+ `check_consistency` 工具 + 6 类缺陷注入集（120 条）；结构类拦截 100%，误杀 0 |
 | M2 决策循环 | ✅ 完成 | 预算 / 状态 / Trace / 规则策略 / 循环 / 条目级断点；死循环与预算保护全部生效 |
 | M3 真实调用 | ✅ 完成 | 配置/密钥、token 账本、DeepSeek 客户端、版本化价格表、`check_coherence`、语义判官（D1）、`LLMPolicy`、token 预算覆盖策略与工具内消耗、A3/A3L/A4 臂评测；D1 0→100%，宏观阻断 83.3%→100% |
-| M4 及以后 | ⬜ 待开始 | 见总纲 §5.5 门禁 |
+| M4 开源切片 | ✅ 完成 | 清单三段（PUBLIC/BUILD/PRIVATE）+ `export_oss` + 边界自证测试；开源仓库独立可跑，无业务词与私有文件 |
+| M5 作品集 | ✅ 完成 | `portfolio/agent-augmentation/`：三件套报告（HTML/MD/JSON）+ 3 张 SVG + 真实 trace + before/after；离线可复现 |
 
 **M0 门禁结果**
 

@@ -99,6 +99,7 @@ agent/
 │   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
 │   ├── run.py            基线 CLI（A0/A1 与 lock 校验）
 │   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A4：召回 / 误报 / 成本）
+│   ├── report.py         作品集报告生成（三件套 + SVG，纯标准库）
 │   ├── baseline/         入库：冻结的基线
 │   └── output/           不入库：运行产物
 ├── runtime/
@@ -183,9 +184,10 @@ python -m agent.benchmark.agent_eval --arm A4  --live
 
 ## 路线
 
-`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 → M5 作品集`
+`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ✅`
 
-M4/M5 待做：作品集三件套（项目说明、架构图、结果报告）与消融曲线图。
+作品集产物（三件套报告 + 图 + trace 样例）在 `portfolio/agent-augmentation/`：
+`benchmark_report.{html,md,json}`、`figures/*.svg`、`04_trace_sample.jsonl`、`05_before_after.md`。
 
 ---
 
