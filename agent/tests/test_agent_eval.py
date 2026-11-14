@@ -95,6 +95,15 @@ class TestLLMArmMetrics:
             assert row["blocked"] == 0, "策略没调用 fallback_keep"
         assert result.clean_flagged == 0
 
+    def test_stopped_counts_budget_terminations(self, dataset):
+        """预算中止单独计数：环境中断不能被误读成"没检出"。"""
+        base, defects = dataset
+        # 单次决策就超 token 预算 → 每条样本都在下一轮被预算拦住
+        result = run_arm(A4, base, defects[:3],
+                         client=_CyclicClient(tokens=10_000), judge=_flag_all)
+        assert result.stopped == len(defects[:3]) + len(base)
+        assert result.failed == 0
+
     def test_tokens_are_accumulated(self, dataset):
         base, defects = dataset
         result = run_arm(A4, base, defects[:2], client=_CyclicClient(), judge=_flag_all)

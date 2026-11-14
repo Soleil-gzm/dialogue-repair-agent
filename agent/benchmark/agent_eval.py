@@ -51,6 +51,9 @@ class ArmResult:
     clean_total: int = 0
     clean_flagged: int = 0
     failed: int = 0
+    # 因预算/墙钟触顶而中止的样本数：宿主机待机等环境噪声会让它变高，
+    # 单独计数才能避免把"环境中断"误读成"模型没检出"
+    stopped: int = 0
     tokens: int = 0
     calls: int = 0
     cost_cny: float = 0.0
@@ -82,6 +85,7 @@ class ArmResult:
             "clean_flagged": self.clean_flagged,
             "clean_fp_rate": self.clean_fp_rate(),
             "failed": self.failed,
+            "stopped": self.stopped,
             "tokens": self.tokens,
             "calls": self.calls,
             "cost_cny": self.cost_cny,
@@ -153,6 +157,8 @@ def run_arm(
         result.tokens += r.tokens
         if r.status == "failed":
             result.failed += 1
+        if r.status == "stopped":
+            result.stopped += 1
         if r.issues:
             row["detected"] += 1
         if r.status == "fallback":
@@ -164,6 +170,8 @@ def run_arm(
         result.tokens += r.tokens
         if r.status == "failed":
             result.failed += 1
+        if r.status == "stopped":
+            result.stopped += 1
         if r.status == "fallback":
             result.clean_flagged += 1
 
