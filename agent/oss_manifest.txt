@@ -15,6 +15,7 @@ benchmark/fixtures.py
 benchmark/defects.py
 benchmark/run.py
 benchmark/agent_eval.py
+benchmark/report.py
 benchmark/baseline/baseline_lock.json
 benchmark/baseline/lock_changelog.md
 eval/__init__.py
@@ -56,6 +57,7 @@ tests/test_judge.py
 tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_agent_eval.py
+tests/test_report.py
 tests/test_budget.py
 tests/test_config.py
 tests/test_ledger.py
