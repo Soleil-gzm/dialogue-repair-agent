@@ -1,5 +1,7 @@
 # dialogue-repair-agent
 
+[![CI](https://github.com/Soleil-gzm/dialogue-repair-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Soleil-gzm/dialogue-repair-agent/actions/workflows/ci.yml)
+
 Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 
 **Reproducible agent evaluation for dialogue data repair.**
