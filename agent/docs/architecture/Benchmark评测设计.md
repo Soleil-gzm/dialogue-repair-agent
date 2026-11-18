@@ -435,7 +435,7 @@ agent/benchmark/
 
 ### 7.3 JSON 顶层结构（目标结构，部分字段未实现）
 
-> 当前 `benchmark_report.json` 只覆盖已实现的指标（各臂 per-type、macro、误报、token、成本、失败/中止）。下列 L3 与 `gates` 字段属设计目标；实际结果字段以 [模块与接口说明](模块与接口说明.md#74-python--magentbenchmarkagent_eval) 为准。
+> 当前 `benchmark_report.json` 只覆盖已实现的指标（各臂 per-type、macro、误报、token、成本、失败/中止）。下列 L3 与 `gates` 字段属设计目标；实际结果字段以 [模块与接口说明](模块与接口说明.md#74-python--m-agentbenchmarkagent_eval) 为准。
 
 ```json
 {
