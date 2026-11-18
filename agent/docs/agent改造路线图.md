@@ -41,7 +41,7 @@
 ## 2. Sprint 0：锁加固（预计半天，最优先）
 
 > 依据 D7。**不是从零建 CI**：`ci.yml` 已在跑 pytest + A0 复现，`pyproject.toml` 已有依赖声明。S0 只补齐让"换机器不影响结论"成立的四件事。
-> 状态（2026-11-18）：代码与 CI 已落地；`baseline_lock.json` 待从 clean 提交重建（旧锁为 v1.0 且 dirty）。
+> 状态（2026-11-18）：已完成。代码与 CI 已落地，`baseline_lock.json` 已从 clean 提交重建为 v2.0（`dirty=false`），`--verify` 与 `--verify-arm A0` 均通过。
 
 ### 2.1 抽样与评估器指纹（2 小时）
 

@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+.venv/
 
 # 本地密钥
 .env
