@@ -83,6 +83,7 @@ tests/benchmark/test_lock.py
 tests/benchmark/test_manifest.py
 tests/__snapshots__/a0_single_dialogue.sha256
 docs/README.md
+docs/architecture/架构设计.md
 docs/architecture/Benchmark评测设计.md
 docs/archive/README.md
 docs/archive/v0.1-2026-11-12/对话数据Agent化改进计划书.md
