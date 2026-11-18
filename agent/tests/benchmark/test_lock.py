@@ -86,18 +86,18 @@ class TestVerifyLock:
         current = _lock(); current["generated_at"] = "2099-01-01T00:00:00"
         assert verify_lock(p, current) == []
 
-    def test_ignores_code_dirty_but_detects_commit_change(self, tmp_path):
+    def test_code_is_provenance_only(self, tmp_path):
         p = tmp_path / "baseline_lock.json"
         a = _lock(); a["code"] = {"git_commit": "abc", "dirty": False}
         write_lock(a, p)
 
-        # dirty 翻转不算基线变化
-        b = _lock(); b["code"] = {"git_commit": "abc", "dirty": True}
+        # code 只溯源不判等：换 commit / dirty 翻转都不算基线变化
+        b = _lock(); b["code"] = {"git_commit": "def", "dirty": True}
         assert verify_lock(p, b) == []
 
-        # commit 变化必须报出
-        c = _lock(); c["code"] = {"git_commit": "def", "dirty": True}
-        assert any("code" in d for d in verify_lock(p, c))
+        # 真正的指纹变化必须报出
+        c = _lock(2); c["code"] = {"git_commit": "def", "dirty": False}
+        assert any("input" in d for d in verify_lock(p, c))
 
 
 class TestDirtyGuard:

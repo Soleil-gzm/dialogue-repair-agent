@@ -4,7 +4,8 @@
 **baseline_lock.json 一经生成即不可修改。**
 指纹变化必须新建 lock 并说明原因，禁止原地覆盖——否则"基线偷偷漂移"。
 
-`generated_at` 是唯一允许变动的字段（仅记录生成时刻），不参与校验。
+`generated_at` 与 `code` 仅记录生成时刻与代码出处，不参与校验：
+前者是时间戳，后者会因提交 lock 本身而变化。
 """
 
 import json
@@ -14,10 +15,12 @@ from typing import Any, Dict, List
 from .canonical import stable_dump
 
 # 不参与跨版本比对的键
-_IGNORED_ON_VERIFY = frozenset({"generated_at"})
+# code 段只做溯源、不做判等：提交 lock 本身就会改变 HEAD，若比较 git_commit，
+# `--verify` 在锁入库后必然失败。真正该判等的是四元组指纹。
+_IGNORED_ON_VERIFY = frozenset({"generated_at", "code"})
 
-# 嵌套键中不参与比对的项：dirty 会随未提交文件增删而翻转，不代表基线变化
-_IGNORED_NESTED = {("code", "dirty")}
+# 嵌套键中不参与比对的项（保留给锁内其他嵌套结构）
+_IGNORED_NESTED: set = set()
 
 
 class LockViolation(RuntimeError):

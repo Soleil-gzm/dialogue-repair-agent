@@ -72,9 +72,10 @@
 - **落地分层（v1.2 补充）**：把"判等"和"溯源"拆成两个文件——混在同一个 lock 里，换机必然 verify 失败，lock 就从保障变成阻塞
   - `baseline_lock.json`（入库，**判等**）：只放跨机器必须一致的东西——输入 sha + 样本键集合 sha + seed + 分层字段、评估器指纹、生成侧模型 tag 与 prompt 版本、价格表版本、离线/回放档的臂产物 sha。任一项不同 = 结果作废
   - `run_manifest.json`（不入库，**溯源**）：machine id、OS、python 版本、依赖锁文件 sha、ollama 版本与模型 digest、起止时间、P50/P95、绝对路径。换机不同属正常，不参与 verify
+  - `code` 段只溯源、不参与 verify：提交锁本身就会改变 HEAD，比 git_commit 会让 `--verify` 在锁入库后必然失败；真正的判等靠四元组指纹
   - 判定规则：`offline` / `replay` 档 artifact sha 必须逐字节一致；`live` 档 LLM 非确定，只要求四元组指纹一致，但结果必须带 manifest 才能进结论
-- **评估器指纹必须派生，不能手写**：`rules_version` 要来自 `eval/rules.py` 常量，`judge_prompt_version` 要来自 `eval/judge.py` 的 `JUDGE_VERSION` 并附 prompt 文本 hash。当前 `benchmark/run.py` 里写死的 `v1` 与 judge.py 的 `coherence-judge-v1` 已经不一致——手写常量等于锁不住"换尺子"
-- **dirty 的锁不许入库**：`code.dirty=true` 时 `git_commit` 无法完整描述产生指纹的代码；当前入库 lock 正是 dirty 状态生成的，CI 应断言入库锁为 clean
+- **评估器指纹必须派生，不能手写**：`rules_version` 要来自 `eval/rules.py` 常量，`judge_prompt_version` 要来自 `eval/judge.py` 的 `JUDGE_VERSION` 并附 prompt 文本 hash。此前 `benchmark/run.py` 手写的 `v1` 与 judge.py 的 `coherence-judge-v1` 已经不一致（S0 已改为派生）——手写常量等于锁不住"换尺子"
+- **dirty 的锁不许入库**：`code.dirty=true` 时 `git_commit` 无法完整描述产生指纹的代码；S0 起生成即拒绝 dirty（`--allow-dirty` 仅临时调试），CI 断言入库锁为 clean，旧锁已按 v2.0 重建
 - **面试防守**：Q「你在家和公司两台机器开发，怎么保证结果一致？」  
   A：显卡差异只影响速度不影响正确性，真正的风险是依赖版本和模型版本漂移。我用锁文件 + CI 复现断言管前者，用钉死模型 tag + 把模型名纳入基线指纹管后者——基线指纹机制本来就能捕获"尺子变了"，跨环境一致性是它的自然延伸。
 
