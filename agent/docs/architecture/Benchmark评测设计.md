@@ -1,9 +1,10 @@
-# Agent 增强层 Benchmark 专项设计方案
+# Agent 增强层 Benchmark 评测设计
 
-> 版本：v1.0
-> 日期：2026-11-12
-> 归属：`agent/docs/`（Agent 相关设计文档统一归档目录）
-> 定位：**独立可执行方案**。本文是 Benchmark 的唯一权威来源；《Agent化改造总纲与Benchmark方案》第三章仅为摘要。
+> 版本：v1.1  
+> 首次版本：v1.0（2026-11-12，原文见 [归档快照](../archive/v1.0-2026-11-12/Benchmark专项设计方案.md)）  
+> 最后修订：2026-11-18  
+> 归属：`agent/docs/architecture/`  
+> 定位：**独立可执行方案**。本文是 Benchmark 指标口径、统计规则与产物规格的唯一权威来源。  
 > 本期范围：不包含 RAG（已移出），对照臂命名预留 `A5-RAG`。
 
 ---
@@ -12,11 +13,30 @@
 
 一个 Benchmark 只有在能回答下面三句话时才有价值：
 
-1. **比谁？** —— 五个对照臂，每个臂只差一个变量（§1）。
-2. **凭什么算数？** —— 输入/配置/评估器三重指纹锁定 + 八条可比性规则 + 统计检验（§2、§6）。
+1. **比谁？** —— 一组单变量对照臂，每个相邻臂只差一个变量（§1）。
+2. **凭什么算数？** —— 输入/配置/评估器/适配四元组指纹锁定 + 八条可比性规则 + 统计检验（§2、§6）。
 3. **错了怎么办？** —— 硬门禁不可交换、失败样本计入分母、负面结果照报（§4.5、§7.4、§10）。
 
 > 反例（绝大多数作品集的做法）：跑 20 条，觉得"改完更顺了"，写"连贯性提升 30%"。这条路一站不住脚，因为**没有基线、没有分母、没有区间**。
+
+### 0.1 实现状态（截至 Sprint 1a）
+
+| 能力 | 状态 | 落地位置 |
+|---|---|---|
+| 公开轨 `base/dev/test`、`defects` 生成 | 已实现 | `benchmark/fixtures.py`、`defects.py` |
+| A0 恒等臂 | 已实现 | `benchmark/arms.py`、`run.py` |
+| A1 规则增强臂 | 已实现但依赖主工程上游步骤 | `benchmark/arms.py` |
+| A2 单次重写臂 | 未实现（S1b） | — |
+| A3 / A3L / A3R / A4 | 已实现 | `benchmark/agent_eval.py` |
+| L1 规则、连贯性、语义判官 | 已实现 | `eval/rules.py`、`coherence.py`、`judge.py` |
+| L2 预算、Trace、死循环保护 | 已实现 | `runtime/budget.py`、`trace.py`、`loop.py` |
+| L3 胜率区间、McNemar、双盲、人工校准 | 未实现（S1b） | — |
+| 指纹、不可变锁、运行清单、ledger | 已实现 | `benchmark/fingerprint.py`、`lock.py`、`manifest.py`、`runtime/ledger.py` |
+| replay / cassette / checkpoint 批量接入 | 未实现（S1b） | — |
+| 报告三件套 + SVG | 已实现 | `benchmark/report.py` |
+| Docker / MCP / OTel | 未实现（S2） | — |
+
+> 本文后续章节区分“设计要求”与“当前实现”。凡未实现项，不得在报告或 README 中写成已完成。
 
 ---
 
@@ -35,45 +55,46 @@
 | 输入指纹 | 输入 JSON 的 `sha256`、样本数、抽样键列表的 `sha256`、抽样 seed | `baseline_lock.json` |
 | 配置指纹 | 该臂完整配置的规范化 JSON 的 `sha256`、prompt 版本、policy、模型名、价格表版本 | 同上 |
 | 评估器指纹 | 规则评估器版本、judge prompt 版本、judge 模型、rubric 版本 | 同上 |
-| 适配指纹 | `adapter_version` + `canonical_schema_version` + `domain_profile_hash` | 同上（见《数据格式适配与兼容规范》§4.2） |
+| 适配指纹 | `adapter_version` + `canonical_schema_version` + `domain_profile` / `domain_profile_hash` | 同上（当前无独立 adapter 模块，见 §3.5） |
 
-生成方式（每次 benchmark 运行自动产出）：
+实际 lock 为 **v2.0**，字段定义以 [模块与接口说明](模块与接口说明.md#91-baseline_lockjsonv20) 为准。示意：
 
 ```json
 {
-  "lock_version": "1.0",
-  "generated_at": "2026-11-12T10:00:00+08:00",
+  "lock_version": "2.0",
+  "generated_at": "<生成时间；校验时忽略>",
   "code": {"git_commit": "<sha>", "dirty": false},
   "input": {
-    "path": "fixtures/public/base_v1.json",
+    "path": "agent/fixtures/public/base_v1.json",
     "sha256": "<64hex>",
-    "n_total": 1200,
+    "n_total": 12,
+    "n_sampled": 12,
     "sample_keys_sha256": "<64hex>",
-    "n_sampled": 50,
-    "sample_seed": 20261112,
-    "strata": ["scenario", "turn_bucket", "has_loss_flag"]
+    "sample_seed": 42,
+    "strata": ["<分层维度>"]
   },
   "evaluator": {
     "rules_version": "1.0.0",
+    "rules_sha256": "<64hex>",
     "judge_prompt_version": "v1",
+    "judge_prompt_sha256": "<64hex>",
     "judge_model": "deepseek-chat",
     "rubric_version": "1.0",
-    "judge_temperature": 0.0
+    "judge_temperature": 0.0,
+    "sha256": "<64hex>"
   },
-  "price_table": {"version": "deepseek_2026-11", "unit": "CNY/1M tokens"},
   "adapter": {
     "adapter_version": "1.0.0",
     "canonical_schema_version": "1.0",
     "domain_profile": "public_after_sales",
     "domain_profile_hash": "<64hex>",
-    "fingerprint_sha256": "<64hex>"
+    "sha256": "<64hex>"
   },
+  "price_table": {"version": "deepseek_2026-11", "unit": "CNY/1M tokens"},
   "arms": {
-    "A0": {"config_sha256": "<64hex>", "prompt_version": null},
-    "A1": {"config_sha256": "<64hex>", "prompt_version": null},
-    "A2": {"config_sha256": "<64hex>", "prompt_version": "v1_rewrite"},
-    "A3": {"config_sha256": "<64hex>", "prompt_version": "v1_rewrite+v1_check"}
-  }
+    "A0": {"config_sha256": "<64hex>", "prompt_version": null, "artifact_sha256": "<64hex>"}
+  },
+  "profile": "standard"
 }
 ```
 
@@ -81,15 +102,18 @@
 
 ### 1.2 对照臂
 
-| 臂 | 名称 | 输入 | 处理方式 | 回答的问题 | 本期 |
+| 臂 | 名称 | 输入 | 处理方式 | 回答的问题 | 实现状态 |
 |---|---|---|---|---|---|
-| **A0** | 原始基线 | `04_finalize` 产物 | 不处理 | 下界。任何方法比它差都是失败 | 必做 |
-| **A1** | 现有增强基线 | 同 A0 | 现有 `05_augment` 规则增强 | 新方法相对**现有能力**是否有增量 | 必做 |
-| **A2** | 单次重写基线 | 同 A0 | 1 次 LLM 重写，无工具、无校验、无回退 | 隔离"工具循环"的贡献 | 待 L3 |
-| **A3** | Agent-rule（主方案） | 同 A0 | 工具循环 + 确定性策略 + 校验 + 回退 | 主方案是否成立 | 必做 |
-| **A3R** | Agent-rule-repair | 同 A0 | A3 + `rewrite_segment` 多轮修复（检出→定位→重写→复检） | 修复工具相对只回退的净收益 | S1 已落地 |
-| **A4** | Agent-llm（增强） | 同 A0 | 工具循环 + DeepSeek function calling 自主决策 | 自主决策值不值那份成本 | 可选 |
-| (A5-RAG) | — | — | — | — | **移出本期** |
+| **A0** | 原始基线 | 同一输入（默认 `base_v1.json`） | 不处理 | 下界。任何方法比它差都是失败 | 已实现 |
+| **A1** | 现有增强基线 | 同 A0 | 现有 `05_augment` 规则增强 | 新方法相对**现有能力**是否有增量 | 已实现，需主工程上游步骤 |
+| **A2** | 单次重写基线 | 同 A0 | 1 次 LLM 重写，无工具、无校验、无回退 | 隔离"工具循环"的贡献 | 未实现（S1b） |
+| **A3** | Agent-rule（主方案） | 同 A0 | 工具循环 + 确定性策略 + 校验 + 回退 | 主方案是否成立 | 已实现 |
+| **A3L** | Agent-rule-LLM | 同 A0 | A3 的工具集，决策者换成 LLM function calling | 只换决策者的净收益 | 已实现 |
+| **A3R** | Agent-rule-repair | 同 A0 | A3 + `rewrite_segment` 多轮修复（检出→定位→重写→复检） | 修复工具相对只回退的净收益 | 已实现（S1a） |
+| **A4** | Agent-llm（增强） | 同 A0 | A3L + 语义判官 | 判官值不值那份成本 | 已实现，需在线密钥 |
+| (A5-RAG) | — | — | — | — | **已移出本期** |
+
+> `A3L` 与 `A4` 是 Sprint 1a 实际使用的臂名；旧文档中的“A4 = LLM 决策”已拆分为 `A3L`（决策）与 `A4`（决策 + 判官），避免一次变动两个变量。
 
 ### 1.3 单变量原则（合法性判据）
 
@@ -98,10 +122,11 @@
 | 对比 | 唯一变量 | 可归因的结论 |
 |---|---|---|
 | A1 vs A0 | 是否做同义/噪声增强 | 现有增强是否有效 |
-| A2 vs A1 | 是否引入 LLM 语义重写 | LLM 重写本身的净收益 |
-| A3 vs A2 | 是否有"检查→校验→回退"闭环 | **工具循环的净收益（主结论）** |
+| A2 vs A1 | 是否引入 LLM 语义重写 | LLM 重写本身的净收益（A2 未实现，暂不可比） |
+| A3 vs A2 | 是否有"检查→校验→回退"闭环 | **工具循环的净收益（主结论）**（A2 未实现，暂不可比） |
+| A3L vs A3 | 决策由规则还是模型做出 | 只换决策者的净收益 |
+| A4 vs A3L | 是否加入语义判官 | 判官的净收益 |
 | A3R vs A3 | 是否有"定位→重写→复检"修复闭环 | 修复工具相对只回退的净收益 |
-| A4 vs A3 | 决策由规则还是模型做出 | 自主决策的净收益 |
 | A3 vs A0 | 全链路 | 端到端价值 |
 
 **违反单变量原则的对比一律不出结论。** 例如"A3 vs A1"里同时变了模型和流程，只能作为参考，不写入结论。
@@ -109,11 +134,12 @@
 ### 1.4 预期单调性（预注册假设）
 
 ```
-胜率：    A0 ≤ A1 < A2 < A3 ≤ A4
-保真率：  A0 = A1 ≥ A3 > A2
-成本：    A0 < A1 << A2 < A3 < A4
+胜率：    A0 ≤ A1 < A2 < A3 ≤ A3L ≤ A4
+保真率：  A0 = A1 ≥ A3 = A3L = A4 > A2
+成本：    A0 < A1 << A2 < A3 < A3L < A4
 ```
 
+- `A3R` 是 A3 的修复分支，不进入上述单调链；只与 A3 做单变量对比。
 - 预设"若 A3 胜率高于 A2 但保真率低于 99%"，则方案判定为**不可用**（硬门禁优先，见 §4.5）。
 - 预注册的作用：**避免看到结果后改判据**。这是实验设计最基本的诚信要求，也是面试里最容易加分的一句话。
 
@@ -124,12 +150,12 @@
 | # | 规则 | 违反后果 | 落地方式 |
 |---|---|---|---|
 | R1 | 所有臂使用**同一输入文件**（sha256 一致） | 臂间不可比 | lock 校验失败即中止 |
-| R2 | 所有臂使用**同一抽样键集合**与同一 seed | 抽样偏差被误读为方法差异 | 只抽一次键，五臂共用 |
+| R2 | 所有臂使用**同一抽样键集合**与同一 seed | 抽样偏差被误读为方法差异 | 只抽一次键，所有臂共用 |
 | R3 | 分层抽样：按 `scenario` × `turn_bucket` × `has_loss_flag` 分层 | 场景分布不一致 | 分层后按比例分配 |
 | R4 | **同一评估器版本**评所有臂 | 标准漂移 | evaluator 指纹入 lock |
-| R5 | 成对盲评：judge 不知道哪份是实验臂，**A/B 与 B/A 各评一次** | 位置偏差 | 两次结果不一致记 tie |
+| R5 | 成对盲评：judge 不知道哪份是实验臂，**A/B 与 B/A 各评一次** | 位置偏差 | **设计目标，未实现（S1b）** |
 | R6 | 每条样本在每个臂只出现一次 | judge 记忆污染 | 输入去重 + key 唯一性断言 |
-| R7 | 失败样本**不回填、不丢弃**，计入分母 | 虚高 | intent-to-treat：`status != accepted` 一律计失败 |
+| R7 | 失败样本**不回填、不丢弃**，计入分母 | 虚高 | 结果 JSON 单列 `failed` / `stopped`；L3 分母统一处理属 S1b |
 | R8 | 所有臂用**同一价格表版本**折算成本 | 成本曲线被污染 | 价格表版本入 lock |
 
 > R7 是最容易被忽略、也最能体现工程素养的一条。**"只统计成功的样本"是数据工作里最常见的自欺。**
@@ -143,19 +169,30 @@
 | 轨 | 路径 | 内容 | 用途 | 是否入库/开源 |
 |---|---|---|---|---|
 | 公开轨 | `agent/fixtures/public/` | 由生成端程序化合成（零业务数据） | 开源版 Benchmark、CI、演示 | ✅ 入库 |
-| 私有轨 | `agent/fixtures/private/` | 真实业务抽样（脱敏） | 内部效果验证 | ❌ gitignore |
+| 私有轨 | `agent/fixtures/private/` | 真实业务抽样（脱敏） | 内部效果验证 | 不入库（仅主工程） |
 
-两轨使用**完全相同的字段契约**，因此同一份 harness 代码可跑两轨。
+两轨使用**完全相同的字段契约**，因此同一份 harness 代码可跑两轨。本仓库只分发公开轨。
 
 ### 3.2 三个数据集
 
 | 数据集 | 规模 | 构造方式 | 提供的标签 | 服务的指标层 |
 |---|---|---|---|---|
 | `defects_v1.jsonl` | 120（6 类 × 20） | 程序化注入缺陷 | 注入轮次 + 缺陷类型 | L1 |
-| `dev_v1.json` | 30 | 随机抽样（不含测试集） | 无（仅用于调 prompt） | 调参 |
-| `test_v1.json` | 50 | 分层抽样，与 dev 不重叠 | 4 维人工标注 | L3 |
+| `dev_v1.json` | 30 | 与 test 一起分层切分，不含测试集 | 无（仅用于调 prompt） | 调参 |
+| `test_v1.json` | 50 | 分层切分，与 dev 不重叠 | 当前无人工标注；4 维 rubric 标注属 L3（未实现） | L3 |
 
-**dev / test 必须分离**，且 test 只在最终结论时用一次。写进流程：`--split test` 需显式指定，默认只跑 dev。
+生成命令：
+
+```bash
+python -m agent.benchmark.fixtures --n 12 --seed 20261112
+python -m agent.benchmark.fixtures \
+  --dev-out agent/fixtures/public/dev_v1.json \
+  --test-out agent/fixtures/public/test_v1.json
+python -m agent.benchmark.defects --per-type 20 --seed 20261113 \
+  --out agent/fixtures/public/defects_v1.jsonl
+```
+
+**dev / test 必须分离**，且 test 只在最终结论时用一次。当前切分在生成阶段一次性完成（默认 `split-seed 20261118`），CLI **没有** `--split test` 开关。
 
 ### 3.3 六类缺陷注入（L1 的 ground truth 来源）
 
@@ -181,13 +218,34 @@
 | 10 个百分点 | ≈ 200 |
 | 5 个百分点 | ≈ 800 |
 
-**结论：主线用 n=50，只能支撑"≥15–20 个百分点"级别的结论。** 报告里必须写明这一点，不能拿 n=50 去宣称 5 个点的差异。若后期需要更细结论，扩到 n=200（`--profile full`）。
+**结论：主线用 n=50，只能支撑"≥15–20 个百分点"级别的结论。** 报告里必须写明这一点，不能拿 n=50 去宣称 5 个点的差异。若后期需要更细结论，需扩到 n=200；`full` 档当前未实现。
+
+### 3.5 数据字段契约与适配边界
+
+两轨共用同一份对话契约：
+
+```json
+{
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "...", "loss": "True"}
+  ]
+}
+```
+
+- `role` 固定为 `system` / `user` / `assistant`；`loss` 为可选字段，当前样本为字符串 `"True"`，规则校验按原值严格比较。
+- `canonical_schema_version` 记录在 lock 与运行清单中；换域时字段、类型与层级**只增不改**，新增元数据不得改变既有字段语义。
+- **当前没有独立 adapter 模块**：读取、抽样与规范化由 harness 直接完成；`adapter` 指纹记录的是 schema 版本与域配置元数据，不代表存在可插拔适配层。独立 adapter 属后续工作。
+- 详细字段与产物定义见 [模块与接口说明](模块与接口说明.md#4-数据契约)。
 
 ---
 
 ## 4. 指标体系
 
 四层，**每层都必须给出「数据来源」**，否则指标不可复算。
+
+> 实现口径（Sprint 1a）：L1/L2 已有对应代码；L3 只有定义，统计与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95、缓存命中率、重复计费数尚未统计。
 
 ### 4.1 L1 能力层 —— 工具是否准确
 
@@ -211,7 +269,7 @@
 | 决策可解释率 | 含 `reason` 字段的决策 / 总决策 | = 1.00 |
 | 回退率 | `fallback_keep` 数 / 总数 | ≤ 0.10 |
 
-### 4.3 L3 效果层 —— 数据是否真的变好
+### 4.3 L3 效果层 —— 数据是否真的变好（设计目标，未实现）
 
 | 指标 | 定义 | 门槛 | 备注 |
 |---|---|---|---|
@@ -225,7 +283,7 @@
 
 > `跨样本重复率` 是为本项目量身加的：原系统最大的病是"味道重复"，LLM 重写如果把它洗得更均匀，等于用更贵的方式犯了同一个错。
 
-### 4.4 L4 工程层 —— 是否可用、可信、可复现
+### 4.4 L4 工程层 —— 是否可用、可信、可复现（部分实现）
 
 | 指标 | 定义 | 门槛 |
 |---|---|---|
@@ -258,6 +316,8 @@
 ## 5. 评估方法
 
 ### 5.1 三档评估器（成本递增，可信度递增）
+
+> 当前实现：E1 规则已实现；E2 只有 D1 单视角语义判官（`eval/judge.py`），成对双向盲评未实现；E3 人工标注未开展。
 
 | 档 | 方法 | 成本 | 用途 | 可信度 |
 |---|---|---|---|---|
@@ -326,44 +386,56 @@
 
 ## 7. 产物规格
 
-### 7.1 目录
+### 7.1 当前实际产物
 
-```
+```text
 agent/benchmark/
 ├── baseline/                        # 入库：冻结的基线（唯一真源）
 │   ├── baseline_lock.json           # 四元组指纹（只读，不可覆盖）
 │   └── lock_changelog.md            # 指纹变更记录
 └── output/                          # 不入库：每次运行的产物
+    ├── ablation_A3.json             # agent_eval 结果
+    ├── ablation_A3L.json
+    ├── ablation_A3R.json
+    ├── ablation_A4.json
+    ├── manifest_A3.json             # 与结果同目录的运行清单
     └── report/
-        ├── agent_benchmark_report.html      # 主展示物（可直接截图）
-        ├── agent_benchmark_report.json      # 结构化，供二次分析
-        ├── agent_benchmark_report.md        # GitHub / 简历链接友好
-        ├── arm_results.json                 # 各臂产物指纹与规模
-        ├── comparison_matrix.csv            # 样本 × 臂 × 指标（长表）
-        ├── significance.json                # 检验结果（含 CI、p 值、n）
-        ├── token_ledger_summary.json        # 成本汇总（详见总纲 §2.5）
-        ├── traces/<sample_key>.jsonl        # 决策链样例（10 条）
-        └── assets/
-            ├── fig1_ablation.png            # A0–A4 胜率 vs 单条 token
-            ├── fig2_tool_f1.png             # 6 类缺陷 × 工具 F1 热力图
-            ├── fig3_trace_timeline.png      # 一条对话的决策时序
-            └── fig4_before_after.md         # 脱敏前后对照
+        ├── arm_results.json         # A0/A1 臂产物指纹与规模
+        └── run_manifest.json        # 环境与命令溯源
 ```
+
+`report.py` 的输出目录（可与 `output/` 相同或独立）：
+
+```text
+<out>/
+├── benchmark_report.json
+├── benchmark_report.md
+├── benchmark_report.html
+└── figures/
+    ├── 01_ablation.svg
+    ├── 02_heatmap.svg
+    ├── 03_trace_timeline.svg
+    └── 04_before_after.svg
+```
+
+**目标产物（未实现，S1b/S2）**：`comparison_matrix.csv`、`significance.json`、`token_ledger_summary.json`、`traces/<sample_key>.jsonl`、PNG 资产目录。这些出现在旧版设计中，当前不得当作已生成文件引用。
 
 > **为什么 baseline 单独放在 `output/` 外面**：`.gitignore` 已全局忽略 `output/`，而基线必须入库才能起到"锁"的作用。运行产物可丢弃，基线不可丢。
 
 ### 7.2 四张图分别讲什么（作品集就靠这四张）
 
-| 图 | X / Y | 一句话结论 |
-|---|---|---|
-| fig1 消融 | 单条 token / 胜率 | 每多花一份 token 换来多少胜率 |
-| fig2 工具能力 | 缺陷类型 / F1 | 哪类缺陷查不出（诚实展示短板） |
-| fig3 决策链 | 时间 / 工具调用 | Agent 真的在"看情况决定"，不是固定流水线 |
-| fig4 前后对照 | — | 具体改了哪几轮、为什么改 |
+| 图 | 文件 | X / Y | 一句话结论 |
+|---|---|---|---|
+| 消融 | `01_ablation.svg` | 单条 token / 阻断率 | 每多花一份 token 换来多少阻断率 |
+| 工具能力 | `02_heatmap.svg` | 缺陷类型 / 检出 | 哪类缺陷查不出（诚实展示短板） |
+| 决策链 | `03_trace_timeline.svg` | 时间 / 工具调用 | Agent 真的在"看情况决定"，不是固定流水线 |
+| 前后对照 | `04_before_after.svg` | — | 具体改了哪几轮、为什么改 |
 
 > fig2 一定要保留表现差的格子。**全是绿色的热力图没人信。**
 
-### 7.3 JSON 顶层结构
+### 7.3 JSON 顶层结构（目标结构，部分字段未实现）
+
+> 当前 `benchmark_report.json` 只覆盖已实现的指标（各臂 per-type、macro、误报、token、成本、失败/中止）。下列 L3 与 `gates` 字段属设计目标；实际结果字段以 [模块与接口说明](模块与接口说明.md#74-python--magentbenchmarkagent_eval) 为准。
 
 ```json
 {
@@ -395,39 +467,53 @@ agent/benchmark/
 
 ---
 
-## 8. 运行档位与复现
+## 8. 运行方式与复现
 
-| 档位 | 命令 | 联网 | 用途 | 产物 |
+### 8.1 当前可用的运行方式
+
+| 方式 | 命令 | 联网 | 用途 | 产物 |
 |---|---|---|---|---|
-| `offline` | `python -m agent.benchmark.run --profile offline --arm A3` | 否（FakeLLM） | CI / 评审离线复现 | 全指标（含结构/规则类） |
-| `replay` | `python -m agent.benchmark.run --profile replay --cassette cassettes/v1.jsonl` | 否（回放真实响应） | 结果可复核 | 全指标 |
-| `live` | `python -m agent.benchmark.run --profile live --api-key-env DEEPSEEK_API_KEY` | 是 | 产出正式数据 | 全指标 + token 实账 |
+| 离线基线 | `python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0` | 否 | 冻结 / 复现 A0 | `arm_results.json`、`run_manifest.json`、lock |
+| 离线规则臂 | `python -m agent.benchmark.agent_eval --arm A3 --out ...` | 否 | 规则决策 + 确定性工具 | `ablation_A3.json` |
+| 在线臂 | `python -m agent.benchmark.agent_eval --arm A3L/A3R/A4 --live --out ...` | 是 | 正式数据 | 结果 JSON + `manifest_<arm>.json` + ledger |
 
-### 8.1 `quick / standard / full` 三档规模
+约束：
 
-沿用生成端已有约定（[run_benchmarks.py](file:///E:/Coding_python/module_based_dialogue_synthesis/benchmarks/run_benchmarks.py#L53-L80) 的 `PROFILES`）：
+- `run.py` **只支持 A0/A1**，不能跑 A3；Agent 臂统一走 `agent_eval.py`。
+- `run.py --profile` 只是写入 lock 的标签，**不切换执行档位**。
+- `agent_eval` 的在线开关是 `--live`；缺少密钥时退出码 2。
+- replay / cassette 未实现（S1b），当前无法离线回放真实响应。
 
-| 档 | n（defects / test） | 臂 | 耗时级别 | 用途 |
-|---|---|---|---|---|
-| `quick` | 30 / 20 | A0,A2,A3 | 分钟级 | 开发自测 |
-| `standard` | 120 / 50 | A0–A3 | 小时级 | 出正式结论 |
-| `full` | 240 / 200 | A0–A4 | 半天级 | 细粒度差异 |
+### 8.2 quick / standard / full（设计目标，未实现）
 
-### 8.2 复现断言（CI 里跑）
+下表为规划中的规模档，当前没有对应 CLI 开关；调试只能用 `--limit N`，正式结论使用固定的 120 条缺陷 + 12 条干净样本。
 
-```python
-def test_benchmark_is_reproducible():
-    r1 = run(profile="offline", arm="A3", seed=20261112)
-    r2 = run(profile="offline", arm="A3", seed=20261112)
-    assert r1["L3_quality"] == r2["L3_quality"]
-    assert r1["artifact_sha256"] == r2["artifact_sha256"]
+| 档 | n（defects / test） | 臂 | 用途 |
+|---|---|---|---|
+| `quick` | 30 / 20 | A0,A2,A3 | 开发自测 |
+| `standard` | 120 / 50 | A0–A3 | 出正式结论 |
+| `full` | 240 / 200 | A0–A4 | 细粒度差异 |
+
+> 不要用 `--profile full` 之类的参数；该参数在 `run.py` 中只是标签，不会扩样。
+
+### 8.3 复现断言（CI 实际执行）
+
+```bash
+python -m pytest
+python -m agent.benchmark.run \
+  --input agent/fixtures/public/base_v1.json \
+  --arms A0 --verify-arm A0
 ```
+
+CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败即中止，不允许用 `--force` 掩盖。
 
 ---
 
 ## 9. 成本-效果前沿（与 token ledger 对接）
 
 本期**只计量、不管控**。Benchmark 把 ledger 当成一等数据源：
+
+> 注意：成本-效果前沿需要 L3 胜率；L3 尚未实现，当前只能展示“成本 vs 阻断率”，不能宣称胜率-成本前沿。
 
 | 派生指标 | 定义 | 用途 |
 |---|---|---|
@@ -469,14 +555,32 @@ def test_benchmark_is_reproducible():
 
 ---
 
-## 12. 执行顺序（与总纲里程碑对齐）
+## 12. 执行顺序（与路线图里程碑对齐）
 
-| 步骤 | 交付 | 通过条件 |
+| 步骤 | 交付 | 通过条件 | 状态 |
+|---|---|---|---|
+| B1 | `agent/fixtures/public/` 三数据集 + 缺陷注入器 | 120 条缺陷，标签可复算 | ✅ 完成 |
+| B2 | E1 规则评估器 + 硬门禁 | 结构/实体/长度全部可判定 | ✅ 完成 |
+| B3 | run harness + `baseline_lock.json` | offline 档 A0/A1 可跑通 | ✅ 完成（A1 需主工程） |
+| B4 | A2/A3 接入 + ledger 汇总 | standard 档产出全指标 | ⬜ 部分：A3/A3L/A3R/A4 已接入；A2 未实现 |
+| B5 | E2 judge + 双向盲评 + 一致性校准 | κ ≥ 0.6，一致率 ≥ 75% | ⬜ 部分：单视角 D1 判官已实现；盲评与校准未做 |
+| B6 | 三件套报告 + 四张图 | 评审可离线一键复现 | ✅ 完成（SVG 四图） |
+| B7 | （可选）A4 Agent-llm | function calling 稳定后 | ✅ 完成 |
+
+## 13. 设计 vs 实现差异（Sprint 1a 基线）
+
+| 设计项 | 当前实现 | 差距 / 后续 |
 |---|---|---|
-| B1 | `agent/fixtures/public/` 三数据集 + 缺陷注入器 | 120 条缺陷，标签可复算 |
-| B2 | E1 规则评估器 + 硬门禁 | 结构/实体/长度全部可判定 |
-| B3 | run harness + `baseline_lock.json` | offline 档 A0/A1 可跑通 |
-| B4 | A2/A3 接入 + ledger 汇总 | standard 档产出全指标 |
-| B5 | E2 judge + 双向盲评 + 一致性校准 | κ ≥ 0.6，一致率 ≥ 75% |
-| B6 | 三件套报告 + 四张图 | 评审可离线一键复现 |
-| B7 | （可选）A4 Agent-llm | function calling 稳定后 |
+| 四元组指纹 | 已实现，含规则与判官源码哈希 | 独立 adapter 模块未落地 |
+| A0/A1/A3/A3L/A3R/A4 | 已实现（A1 需主工程） | A2 未实现 |
+| L1 指标 | 规则、连贯性、D1 判官已实现 | 定位 P/R/F1 的完整统计未汇总 |
+| L2 指标 | 预算、死循环、Trace、回退已实现 | 无效调用率、可解释率未在报告汇总 |
+| L3 指标 | 仅定义 | 胜率、CI、McNemar、双盲、人工标注全部未实现 |
+| L4 指标 | token、成本、指纹复现已实现 | P95、缓存命中率、重复计费数未统计 |
+| 报告产物 | 三件套 + 四张 SVG | 长表、显著性、账本汇总、trace 样例未生成 |
+| replay 档 | 未实现 | 无 cassette 机制 |
+| 档位规模 | 仅 `--limit` | quick/standard/full 未实现 |
+| `blocked` 口径 | 只统计 `fallback` | A3R 重写成功未计入，需在 S1b 统一 |
+| Docker/MCP/OTel | 未实现 | 路线图 S2 |
+
+> 本表是后续 Sprint 的验收参照：任何一项从“未实现”变为“已实现”，必须同时更新本文 §0.1、[模块与接口说明](模块与接口说明.md) 与根 README。
