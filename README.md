@@ -8,11 +8,15 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 
 用 LLM Agent 修复模板拼接式对话的跨轮断裂问题，并用一套**可复现的评测体系**证明它有效。
 
-当前状态：`M3 真实调用 ✅` —— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、可插拔插件机制、
+当前状态：`Sprint 0 ✅ / Sprint 1a ✅`（历史里程碑 M0–M5 均已完成）—— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、
 五条保真约束 + `check_consistency`、连贯性检查 `check_coherence`（重复空转 / 退化轮次）、
 语义判官（D1 答非所问，可注入、prompt 版本化）、6 类程序化缺陷注入集、
-决策循环（预算 / 死循环保护 / Trace）与两种可消融的决策策略（规则型 / LLM function calling），
-以及 DeepSeek 客户端（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
+决策循环（预算 / 死循环保护 / Trace）与两种可消融的决策策略（规则型 / LLM function calling）、
+**可回退修复闭环**（`rewrite_segment` + A3R 多轮策略）、dev/test 分层切分、
+`generate` / `judge` 分侧路由，以及 DeepSeek 客户端（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
+
+下一步 Sprint 1b：A2 单次重写臂、L3 效果层统计、replay 与 checkpoint 批量接入。
+完整设计见 [Agent 文档中心](agent/docs/README.md)。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。
 > 数据全部程序化合成（中立域：订单售后回访）。
@@ -54,15 +58,19 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 
 每个相邻臂只差一个变量，保证结论可归因：
 
-| 臂 | 处理 | 回答的问题 | 可独立运行 |
+| 臂 | 处理 | 回答的问题 | 状态 |
 |---|---|---|---|
 | **A0** | 不处理 | 下界；任何方法比它差都是失败 | ✅ |
-| **A1** | 现有规则增强 | 相对现有能力有无增量 | ⬜ 需上游工程 |
-| A2 | 单次 LLM 重写 | "LLM 重写"本身值不值 | ⬜ M3 |
-| A3 | Agent 工具循环 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
+| **A1** | 现有规则增强 | 相对现有能力有无增量 | ⬜ 需主工程上游步骤 |
+| **A2** | 单次 LLM 重写 | "LLM 重写"本身值不值 | ⬜ 未实现（S1b） |
+| **A3** | Agent 工具循环 + 规则决策 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
+| **A3L** | A3 的工具集 + LLM 决策 | 只换决策者是否值得 | ✅ |
+| **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 已实现，待 L3 复测 |
+| **A4** | A3L + 语义判官 | 判官是否值得 | ✅ 需在线密钥 |
 
 > A1 复用上游数据工程的增强步骤，因此不在本仓库可运行范围内；
 > 它的指纹仍完整记录在 lock 里，作为"测过什么"的凭据。
+> A2 尚未实现，所以"A3 vs A2"的主结论仍需等 Sprint 1b。
 
 ---
 
@@ -72,10 +80,16 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 git clone https://github.com/<your-account>/dialogue-repair-agent
 cd dialogue-repair-agent
 
+# 离线安装（A0/A3 与测试）；在线臂改用 ".[dev,llm]" 或 uv sync --all-extras
 python -m pip install -e ".[dev]"
 
 # 生成公开轨数据（同 seed 必然同产物）
 python -m agent.benchmark.fixtures --n 12 --seed 20261112
+
+# 生成 dev / test 分层切分（30 + 50，互不重叠）
+python -m agent.benchmark.fixtures \
+  --dev-out agent/fixtures/public/dev_v1.json \
+  --test-out agent/fixtures/public/test_v1.json
 
 # 跑 A0 并复现冻结基线
 python -m agent.benchmark.run \
@@ -86,7 +100,8 @@ python -m agent.benchmark.run \
 python -m pytest
 ```
 
-无任何外部依赖（仅标准库）；Python ≥ 3.10。
+离线路径零第三方依赖（仅标准库）；在线臂需要 `httpx` / `tenacity`。Python ≥ 3.10。
+完整命令与排障见 [部署与运行指南](agent/docs/guides/部署与运行指南.md)。
 
 ---
 
@@ -98,18 +113,20 @@ agent/
 │   ├── canonical.py      规范化序列化 + sha256（唯一哈希入口）
 │   ├── fingerprint.py    四元组指纹
 │   ├── lock.py           不可变 lock + 校验
+│   ├── manifest.py       运行清单（环境 / 命令 / 产物哈希，不参与判等）
 │   ├── arms.py           A0 恒等臂 / A1 上游增强臂
-│   ├── fixtures.py       中立域程序化数据生成
+│   ├── fixtures.py       中立域程序化数据生成 + dev/test 分层切分
 │   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
 │   ├── run.py            基线 CLI（A0/A1 与 lock 校验）
-│   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A4：召回 / 误报 / 成本）
+│   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A3R/A4：召回 / 误报 / 成本）
 │   ├── report.py         作品集报告生成（三件套 + SVG，纯标准库）
 │   ├── baseline/         入库：冻结的基线
 │   └── output/           不入库：运行产物
 ├── runtime/
 │   ├── llm.py            LLM 客户端协议 + FakeLLMClient
-│   ├── deepseek.py       DeepSeek 客户端（重试分类 / 缓存 / 逐次计量）
+│   ├── deepseek.py       DeepSeek 客户端（重试分类 / 缓存 / 逐次计量 / 分侧路由）
 │   ├── config.py         .env 读取与 LLMSettings（密钥只走环境变量）
+│   ├── pricing.py        版本化价格表
 │   ├── ledger.py         token 账本（append-only，缓存命中成本归零）
 │   ├── registry.py       工具注册表 + 工具契约
 │   ├── loop.py           决策循环（预算 / 死循环识别 / 终止原因）
@@ -123,9 +140,15 @@ agent/
 ├── tools/
 │   ├── check_consistency.py  规则型工具（可脱离 LLM 运行）
 │   ├── check_coherence.py    连贯性工具（默认离线，判官可注入）
-│   └── fallback_keep.py      保底回退到原对话
-├── fixtures/public/      公开轨数据（base_v1 / defects_v1）
-├── docs/                 设计文档（基准方案、路线）
+│   ├── fallback_keep.py      保底回退到原对话
+│   └── rewrite_segment.py    定位并重写指定轮次（A3R 专用）
+├── fixtures/public/      公开轨数据（base_v1 / dev_v1 / test_v1 / defects_v1）
+├── docs/
+│   ├── README.md         文档总索引
+│   ├── architecture/     架构设计 / 模块与接口 / Benchmark 评测设计
+│   ├── decisions/        ADR / 改造路线图
+│   ├── guides/           部署与运行指南
+│   └── archive/          历史版本与版本追溯
 ├── tests/                测试，含开源边界自证
 ├── oss_manifest.txt      发布清单（PUBLIC / BUILD / PRIVATE）
 └── scripts/export_oss.py 按清单导出，防误推
@@ -160,6 +183,7 @@ agent/
 ```bash
 python -m agent.benchmark.agent_eval --arm A3 --out agent/benchmark/output/ablation_A3.json
 python -m agent.benchmark.agent_eval --arm A3L --live   # 需密钥，会消耗 token
+python -m agent.benchmark.agent_eval --arm A3R --live
 python -m agent.benchmark.agent_eval --arm A4  --live
 ```
 
@@ -177,6 +201,12 @@ python -m agent.benchmark.agent_eval --arm A4  --live
 恢复后该条的墙钟预算触发中止（检出但未回退）；单独复跑该条为 blocked。
 评测器现在把这类预算中止计入独立的 `stopped` 字段，不会混进"模型没检出"。
 
+> **A3R 与 A2 的口径说明**
+>
+> - A3R 已实现，但当前评测器只把 `fallback` 计入 `blocked`，`rewrite_segment` 重写成功只计入 `detected`；
+>   在口径统一（Sprint 1b）前，不把 A3R 数字与上表并列。
+> - A2 未实现，因此"A3 vs A2"的主结论仍待补测；上表只报告已完成的 A3/A3L/A4。
+
 三个结论：
 
 1. **只换决策者（A3 → A3L）零增益，却多花 ¥0.40**。这套工具集上瓶颈不在"选哪个工具"，而在工具能力本身。
@@ -192,10 +222,34 @@ python -m agent.benchmark.agent_eval --arm A4  --live
 
 ## 路线
 
-`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ✅`
+历史里程碑：`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ✅`
+
+当前 Sprint（以 [改造路线图](agent/docs/decisions/改造路线图.md) 为准）：
+
+`S0 基线加固 ✅ → S1a 修复闭环 ✅ → S1b 效果层与回放（待做）→ S2 服务化 → S3 RAG`
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| S0 | `baseline_lock.json` v2.0、运行清单、CI 指纹复现 | ✅ |
+| S1a | `rewrite_segment`、A3R 多轮修复、`generate/judge` 分侧路由、dev/test 切分 | ✅ |
+| S1b | A2 臂、L3 胜率与统计、replay、checkpoint 批量接入 | ⬜ |
+| S2 | MCP Server、Docker、OpenTelemetry | ⬜ |
+| S3 | RAG 增强（当前仅 `A5-RAG` 命名占位） | ⬜ |
 
 作品集产物（三件套报告 + 图 + trace 样例）在 `portfolio/agent-augmentation/`：
 `benchmark_report.{html,md,json}`、`figures/*.svg`、`04_trace_sample.jsonl`、`05_before_after.md`。
+
+## 文档
+
+| 文档 | 内容 |
+|---|---|
+| [文档总索引](agent/docs/README.md) | 阅读路径、权威顺序、文档规范与校验清单 |
+| [架构设计](agent/docs/architecture/架构设计.md) | 整体架构、模块划分、核心流程、技术选型、非功能设计 |
+| [模块与接口说明](agent/docs/architecture/模块与接口说明.md) | 工具契约、运行时契约、CLI、数据与产物字段 |
+| [Benchmark 评测设计](agent/docs/architecture/Benchmark评测设计.md) | 基线指纹、指标口径、统计与报告规格 |
+| [决策记录 ADR](agent/docs/decisions/决策记录ADR.md) | 关键取舍与边界 |
+| [改造路线图](agent/docs/decisions/改造路线图.md) | Sprint 排序与状态 |
+| [部署与运行指南](agent/docs/guides/部署与运行指南.md) | 安装、数据生成、离线复现、在线评测、排障 |
 
 ---
 
