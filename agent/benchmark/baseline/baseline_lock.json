@@ -11,31 +11,33 @@
       "artifact_sha256": "e577cfa78cb2e7b7e70a1edb6f138a7ce6662dd1d7879f9a16bd8f122a7b729d",
       "config_sha256": "e19b08cc40cd66b986d03af75d083732a15d710f5df2b1067c5966e912146e52",
       "prompt_version": null
-    },
-    "A1": {
-      "artifact_sha256": "a4bd1dc91d20b6444cb1acab6b5d2a297072ef142940f4b5bebb30e53ff8ea5f",
-      "config_sha256": "7d9c37ca786fb29ba318c08b582003323709f9687690e4620b33c0934a0a1362",
-      "prompt_version": null
     }
   },
   "code": {
-    "dirty": true,
-    "git_commit": "fde585bb0849b2b30b2e6bd603b51d5a8a665943"
+    "dirty": false,
+    "git_commit": "63b5b5c828165194d71ca49e24ce88c6b2c70484"
   },
   "evaluator": {
     "judge_model": "deepseek-chat",
-    "judge_prompt_version": "v1",
+    "judge_prompt_sha256": "c934e08935787c9c149f6d5930048b11975da487bcf72402e5b31a11514a2d87",
+    "judge_prompt_version": "coherence-judge-v1",
     "judge_temperature": 0.0,
     "rubric_version": "1.0",
+    "rules_sha256": "2ab513de129aff4d50e787a7a692a9aec95ccdc759bd2dc4ec3352c3402be5b8",
     "rules_version": "1.0.0",
-    "sha256": "bc0259a80177595904ebe9395e793e411f75b5728b48c050a55b668ad3d314d8"
+    "sha256": "7052922e916f94d430d3c7451e11d8e9a14c9d247f6549775f57660f5b176eb7"
   },
+  "generated_at": "2026-11-18T08:50:28.174652+00:00",
   "input": {
+    "n_sampled": 12,
     "n_total": 12,
     "path": "agent/fixtures/public/base_v1.json",
-    "sha256": "e6fc7190525233788aecf84e6208eff9fddef2c45ba0b7f73af6789fe52f1cdb"
+    "sample_keys_sha256": "919aee01d4a786c7a556252b51c4018c99051f5585565efee85d9038472df265",
+    "sample_seed": 42,
+    "sha256": "3c07ec9fc9309a63c81fe40a89133a1e9859adcd259c03890ecae8585c593bf3",
+    "strata": []
   },
-  "lock_version": "1.0",
+  "lock_version": "2.0",
   "price_table": {
     "unit": "CNY/1M tokens",
     "version": "deepseek_2026-11"
