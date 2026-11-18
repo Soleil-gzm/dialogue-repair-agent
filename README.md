@@ -59,7 +59,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 | **A0** | 不处理 | 下界；任何方法比它差都是失败 | ✅ |
 | **A1** | 现有规则增强 | 相对现有能力有无增量 | ⬜ 需上游工程 |
 | A2 | 单次 LLM 重写 | "LLM 重写"本身值不值 | ⬜ M3 |
-| A3 | Agent 工具循环 | 工具循环比固定重写强多少 | ⬜ M3 |
+| A3 | Agent 工具循环 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
 
 > A1 复用上游数据工程的增强步骤，因此不在本仓库可运行范围内；
 > 它的指纹仍完整记录在 lock 里，作为"测过什么"的凭据。
@@ -162,6 +162,10 @@ python -m agent.benchmark.agent_eval --arm A3 --out agent/benchmark/output/ablat
 python -m agent.benchmark.agent_eval --arm A3L --live   # 需密钥，会消耗 token
 python -m agent.benchmark.agent_eval --arm A4  --live
 ```
+
+> 口径与溯源：下表为 120 条注入缺陷 + 12 条干净对话的单轮全量运行，成本来自 append-only ledger（高峰价）。
+> 结果 JSON 目前未入库（`output/` 被 gitignore），因此这些数字还无法按指纹复核；
+> 计划将结果快照与环境 manifest 一并提交，届时每个数字都可复算。
 
 | 臂 | 决策 | 工具 | D1 | D2 | D3 | D4 | D5 | D6 | 误报 | macro | tokens | 成本 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|

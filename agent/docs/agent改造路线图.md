@@ -1,6 +1,6 @@
 # dialogue-repair-agent → Agent 岗位作品改造路线图
 
-> 版本：v2.0 ｜ 2026-11-18（依据《agent决策记录ADR.md》D1–D9 修订）  
+> 版本：v2.1 ｜ 2026-11-18（依据《agent决策记录ADR.md》v1.2 修订：lock/manifest 分层、S0 收缩）  
 > 目标：把现有项目从「质检 + 消融评测 Agent」升级为覆盖目标 JD 高频关键词的完整 Agent 作品，**每个关键词都有真实代码支撑，不靠换词硬凑**。
 
 ---
@@ -12,6 +12,7 @@
 3. 诚实边界：RAG、LangGraph、Docker 做到哪一步就说到哪一步，未实现的词不上简历（D9）
 4. **主方向是 Harness**（基线/消融/门禁/可复现），runtime 保持薄而稳（D2）
 5. **单 Agent 架构不摇摆**：不做 multi-agent，消融证据已证明决策层非瓶颈（D3）
+6. **"判等"与"溯源"分开**：`baseline_lock.json` 只放跨机必须一致的指纹（不同即结论作废）；环境、耗时、机器信息写 `run_manifest.json`（换机不同属正常，不参与校验）（D7）
 
 **已明确的非目标（写进 README 也能加分）：**
 
@@ -20,13 +21,13 @@
 
 ---
 
-## 1. 关键词覆盖矩阵（v2）
+## 1. 关键词覆盖矩阵（v2.1）
 
 | JD 关键词 | 现状 | 改造动作 | Sprint |
 | ----------------------- | -------- | ---------------------------------------------- | ------ |
-| CI/CD / 环境一致性 | ⚠️ 待补 | **Sprint 0**：GitHub Actions + 依赖/模型锁定（跨机开发的地基） | S0 |
+| CI/CD / 环境一致性 | ⚠️ 待补 | **S0 锁加固**：抽样指纹 + 评估器派生 + 拒绝 dirty + `run_manifest` 环境溯源（CI 与依赖声明已存在，属补齐而非新建） | S0 |
 | 工具调用 / Function Calling | ✅ 已有 | 补 `rewrite_segment`，决策空间 3 → 5+；stage 路由双模型 | S1 |
-| 评测体系 | ✅✅ 强项 | 补 L3 效果层（胜率/CI/McNemar/双向盲评）——设计已写、未落地 | S1 |
+| 评测体系 | ✅✅ 强项 | 补 L3 效果层（胜率/CI/McNemar/双向盲评）——设计已写、未落地；L3 统一建在 `agent_eval` 之上并产出指纹，结果快照入库 | S1 |
 | 稳定性 / 断点续跑 | ⚠️ 部分 | checkpoint 接入批量评测 + replay 档位（cassette 回放） | S1 |
 | 真实数据验证 | ⚠️ 缺 | 私有轨：公司数据 + Ollama 本地模型，聚合脱敏发布（并行，不依赖新功能） | S1 并行 |
 | MCP | ✅ 有（公司侧） | 工具集封装为 MCP server，Claude Code/Cursor 直连 | S2 |
@@ -37,36 +38,49 @@
 
 ---
 
-## 2. Sprint 0：跨环境地基（预计 1–2 天，最优先）
+## 2. Sprint 0：锁加固（预计半天，最优先）
 
-> 依据 D7：在家（4060）/公司（4090）双机开发，先消除"代码能跑但环境漂移"的风险；同时这是 Docker/CI 缺口的第一块。
+> 依据 D7。**不是从零建 CI**：`ci.yml` 已在跑 pytest + A0 复现，`pyproject.toml` 已有依赖声明。S0 只补齐让"换机器不影响结论"成立的四件事。
 
-### 2.1 GitHub Actions（半天）
+### 2.1 抽样与评估器指纹（2 小时）
 
-- pytest + offline 档复现断言（方案 §8.2）+ lock 校验
-- **最强保障**：任何在家能跑、公司跑挂的代码进不了 main
+- 输入指纹补 `sample_keys_sha256` / `sample_seed` / `strata`（设计文档 §1.1 已承诺、代码未落地）
+- `rules_version` 改为从 `eval/rules.py` 常量派生；`judge_prompt_version` 改为 `eval/judge.py` 的 `JUDGE_VERSION` + prompt 文本 hash
+- **验收**：改一处 judge prompt 而忘改版本号，`--verify` 必须失败
 
-### 2.2 依赖与模型锁定（半天）
+### 2.2 拒绝 dirty 入库 + 环境 manifest（2 小时）
 
-- `uv.lock` / requirements.lock 提交，两机统一 `uv sync`
-- Ollama 模型钉死完整 tag（如 `qwen2.5:7b-instruct-q4_K_M`），两机核对 hash；模型名纳入 lock 指纹
+- 入库锁必须是 clean 状态：CI 断言 `code.dirty=false`，`--verify` 不再忽略 dirty
+- 新增 `run_manifest.json`（不入库）：machine id、OS、python、依赖锁 sha、ollama 版本/模型 digest、耗时、P50/P95
+- 判定规则：`offline` / `replay` 档逐字节一致；`live` 档只比四元组指纹
 
-### 2.3 stage 路由双模型配置（半天）
+### 2.3 依赖与配置契约（1 小时）
 
-- 客户端工厂按 stage 路由：`generate`（decide + rewrite 共用）与 `judge` 独立模型、跨家族（D4）
-- 配置允许指向同一模型，但报告 limitations 必须声明
-- `.env` 放本机差异（OLLAMA_BASE_URL、模型名、密钥），提交 `.env.example` 作契约；代码中永不出现"4060/4090"
+- `uv.lock` 提交，两机统一 `uv sync`；Ollama 模型钉死完整 tag，digest 记入 manifest
+- `.env.example` 作契约（`DEEPSEEK_MODEL` / `JUDGE_MODEL` / `OLLAMA_BASE_URL`）；代码中永不出现"4060/4090"
+
+### 2.4 迁出：stage 路由双模型 → S1
+
+`generate` 阶段要等 `rewrite_segment` 落地才有第一个消费者；S0 搭路由只会有抽象、没有测试覆盖。改为随 rewrite 一起实现（D4）。
 
 ---
 
 ## 3. Sprint 1：修复闭环 + 评测叙事完整（预计 5–7 天）
 
 > 解决核心缺口：Agent 只有"检查 + 回退"，没有"修复"。
+> 建议拆两段交付：**S1a** = rewrite + A2 臂 + MCP demo（可录屏）；**S1b** = L3 统计 + replay + checkpoint。
+
+### 3.0 前置：fixture dev/test 分离（0.5 天）
+
+- 按设计文档 §3.2 产出 `dev_v1.json`（30，调 prompt）与 `test_v1.json`（50，只在最终结论用一次）
+- 当前只有 `base_v1.json`(12) + `defects_v1.jsonl`(120)；不分离就调 rewrite prompt，L3 胜率会被调参污染
+- **验收**：键级断言 dev/test 无重叠
 
 ### 3.1 `rewrite_segment` 工具（3 天）
 
 - `tools/rewrite_segment.py`：LLM 重写指定轮次，入参由运行时注入（沿用设计取舍：模型只定位 + 下指令，不复述对话）
 - 模型走生成侧配置（`generate` stage，temp 0.3–0.7）
+- 同期落地 stage 路由双模型（`generate` / `judge`，D4）——此时才有第一个真实消费者
 - RulePolicy 升级为多轮策略：检出 → 定位 → 重写 → 复检（consistency + coherence）→ 接受/回退
 - 死循环保护覆盖"重写→复检→再重写"循环
 - **面试叙事**：消融显示瓶颈在工具不在决策，所以先扩工具再谈决策智能化——排序是实验驱动的
@@ -74,6 +88,8 @@
 ### 3.2 L3 效果层落地（2 天）
 
 按 Benchmark 设计方案 §4.3/§6 兑现：
+
+> **L3 归属**：统一建在 `agent_eval`（现有 A3/A3L/A4 消融 CLI）之上，不另起一套；结果须带指纹（输入 sha / 模型 tag / judge prompt 版本），并把结果快照提交到 `baseline/` 旁（`output/` 不入库），保证 README 的每个数字可复算。
 
 - A2 臂（单次重写）——主结论 A3 vs A2 的前置条件
 - 成对胜率 WR + Wilson 95% CI + McNemar
@@ -91,7 +107,7 @@
 依据 D6，公司机（4090）执行：
 
 - Ollama 部署 qwen2.5+（必须支持 tool calls），客户端改 base_url 复用；ledger 加本地模型条目（成本 0、token 照记）
-- **合规先行**：内部报备；只发布聚合指标 + 缺陷类型分布，绝不展示原始对话/业务线名/字段值
+- **合规先行**：内部报备（报备对象 / 内容 / 周期 / 模型权限四项见 ADR 待定池）；只发布聚合指标 + 缺陷类型分布，绝不展示原始对话/业务线名/字段值
 - 产出：公开轨 vs 私有轨指标并列报告；本地模型 vs 线上模型的检出差距照实报（"模型能力下限对 Agent 效果的敏感性"本身就是结论）
 - 判官跨家族：本地 qwen 生成 + 线上 deepseek-chat 或本地异家族模型判分（D4）
 - 产物记录 machine id + ollama 版本 + 模型 hash；产物不进 git，只合并结论
@@ -158,14 +174,16 @@
 4. LangGraph/Dify 等框架词只在真正写过之后写上简历
 5. 人工标注（κ 校准）成本高，先用 judge 双向盲评顶住 L3，人工校准作 limitation 声明
 6. 判断新需求是否接：对照《agent决策记录ADR.md》——凡与 D2（Harness 主方向）、D3（不做多 Agent）冲突的，先进待定池不排期
+7. **评估器版本禁止手写**：必须从 `eval/rules.py` / `eval/judge.py` 常量及 prompt 文本派生，否则"换尺子"不会触发 lock 变化
+8. **dirty 锁不许入库**：`git_commit` 无法描述未提交改动；当前入库锁（`dirty: true`）应在 S0 重建
 
 ---
 
 ## 8. 执行顺序总览
 
 ```
-S0 跨环境地基（CI/锁定/双模型配置）      ← 1–2 天，立即可做
-S1 修复闭环 + L3 + replay ｜ 私有轨实验并行 ← 5–7 天
+S0 锁加固（抽样指纹/评估器派生/dirty 拒绝/manifest） ← 半天，立即可做
+S1 前置 dev/test 分离 → 修复闭环 + L3 + replay ｜ 私有轨实验并行 ← 5–7 天
 S2 MCP + Docker + 可观测（+LangGraph 可选）← 5–7 天
 S3 RAG 接口占位（实现后移）             ← 1 天
 ```
