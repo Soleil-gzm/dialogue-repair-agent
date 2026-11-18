@@ -1,5 +1,8 @@
-# 运行产物（不入库）
+# 运行产物（含私有运行结果，不入库）
 output/
+# 真实业务数据与私有运行记录不得进入开源切片
+/fixtures/private/
+/logs/agent/private/
 __pycache__/
 *.pyc
 .pytest_cache/
