@@ -77,6 +77,7 @@
 - 按设计文档 §3.2 产出 `dev_v1.json`（30，调 prompt）与 `test_v1.json`（50，只在最终结论用一次）
 - 当前只有 `base_v1.json`(12) + `defects_v1.jsonl`(120)；不分离就调 rewrite prompt，L3 胜率会被调参污染
 - **验收**：键级断言 dev/test 无重叠
+- 状态（2026-11-18）：已完成。`fixtures.split_dialogues` 按「场景 × 轮次桶 × loss」分层（单例层归 test，最大余数法分配），已产出 `dev_v1.json`(30) / `test_v1.json`(50)，可复现且键级无重叠有测试锁定
 
 ### 3.1 `rewrite_segment` 工具（3 天）
 
@@ -85,6 +86,7 @@
 - 同期落地 stage 路由双模型（`generate` / `judge`，D4）——此时才有第一个真实消费者
 - RulePolicy 升级为多轮策略：检出 → 定位 → 重写 → 复检（consistency + coherence）→ 接受/回退
 - 死循环保护覆盖"重写→复检→再重写"循环
+- 状态（2026-11-18）：S1a 已完成。`tools/rewrite_segment.py`、`StageRoutedClient` + `judge_settings`、`RulePolicy(rewrite_tool=...)` 多轮状态机、A3R 臂均已落地；A2 单次重写臂随 3.2 的 L3 一起补齐
 - **面试叙事**：消融显示瓶颈在工具不在决策，所以先扩工具再谈决策智能化——排序是实验驱动的
 
 ### 3.2 L3 效果层落地（2 天）
