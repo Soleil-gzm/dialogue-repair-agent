@@ -7,7 +7,7 @@ __pycache__/
 build/
 dist/
 .venv/
-
+.trae/documents/
 # 本地密钥
 .env
 .env.local
