@@ -36,34 +36,118 @@ class RulePolicy:
 
     def __init__(self,
                  checks: Sequence[str] = ("check_consistency", "check_coherence"),
-                 fallback_tool: str = "fallback_keep"):
+                 fallback_tool: str = "fallback_keep",
+                 *,
+                 rewrite_tool: Optional[str] = None,
+                 max_rewrites_per_turn: int = 2,
+                 max_rewrite_rounds: int = 4):
         self._checks = tuple(checks)
         self._fallback = fallback_tool
+        # 不传重写工具时保持旧行为：只检查 + 回退，完全确定性
+        self._rewrite = rewrite_tool
+        self._max_per_turn = max(1, int(max_rewrites_per_turn))
+        self._max_rounds = max(1, int(max_rewrite_rounds))
 
     def decide(self, state: Any) -> Decision:
+        if self._rewrite is None:
+            return self._decide_simple(state)
+        return self._decide_rewrite(state)
+
+    # ------------------------------------------------------------------ 旧行为
+    def _decide_simple(self, state: Any) -> Decision:
         called = state.called_tools()
 
         # 第一步：按链顺序把校验跑完
         for tool in self._checks:
             if tool not in called:
-                return Decision(
-                    ACTION_CALL_TOOL, tool,
-                    {"before": state.original, "after": state.dialogue}
-                    if tool == "check_consistency"
-                    else {"dialogue": state.dialogue},
-                    "先校验结构不变与实体保真" if tool == "check_consistency"
-                    else "再校验对话自身连贯性",
-                )
+                return self._check_decision(tool, state)
 
         # 第二步：有违规就保留原文（宁可不变，也不能改坏）
         if state.issues and self._fallback not in called:
-            return Decision(
-                ACTION_CALL_TOOL, self._fallback,
-                {"original": state.original},
-                f"检测到 {len(state.issues)} 处违规，回退原文",
-            )
+            return self._fallback_decision(state)
 
         return Decision(ACTION_STOP, reason="校验通过，接受当前版本")
+
+    # ------------------------------------------------------------------ 多轮修复
+    def _decide_rewrite(self, state: Any) -> Decision:
+        history = list(state.history or [])
+        names = [h.get("tool") for h in history]
+
+        if self._fallback in names:
+            return Decision(ACTION_STOP, reason="已回退原文，结束流程")
+
+        last_rewrite = max(
+            (i for i, name in enumerate(names) if name == self._rewrite),
+            default=-1,
+        )
+        # 重写失败说明模型给不出可用结果，直接回退，不再空转复检
+        if last_rewrite >= 0 and not history[last_rewrite].get("ok", True):
+            return self._fallback_decision(
+                state, reason="重写失败，回退原文",
+            )
+
+        # 本轮 = 最近一次重写之后；rewrite 成功会清空 issues，必须重跑校验
+        done = {name for name in names[last_rewrite + 1:]}
+        for tool in self._checks:
+            if tool not in done:
+                return self._check_decision(tool, state)
+
+        if not state.issues:
+            return Decision(ACTION_STOP, reason="校验通过，接受当前版本")
+
+        turn = self._target_turn(state)
+        if turn is None:
+            return self._fallback_decision(
+                state, reason="违规无法定位到 assistant 轮次，回退原文",
+            )
+
+        rewrites = [h for h in history if h.get("tool") == self._rewrite]
+        done_rewrites = [h for h in rewrites if h.get("ok", True)]
+        same_turn = sum(1 for h in done_rewrites if h.get("turn") == turn)
+        if same_turn >= self._max_per_turn:
+            return self._fallback_decision(
+                state, reason="同一轮重写已达上限，回退原文",
+            )
+        if len(done_rewrites) >= self._max_rounds:
+            return self._fallback_decision(
+                state, reason="重写轮次已达上限，回退原文",
+            )
+
+        return Decision(
+            ACTION_CALL_TOOL, self._rewrite,
+            {"dialogue": state.dialogue, "turn": turn, "issues": list(state.issues)},
+            f"第 {turn} 轮存在 {len(state.issues)} 处违规，重写该轮",
+        )
+
+    # ------------------------------------------------------------------ 辅助
+    def _check_decision(self, tool: str, state: Any) -> Decision:
+        return Decision(
+            ACTION_CALL_TOOL, tool,
+            {"before": state.original, "after": state.dialogue}
+            if tool == "check_consistency"
+            else {"dialogue": state.dialogue},
+            "先校验结构不变与实体保真" if tool == "check_consistency"
+            else "再校验对话自身连贯性",
+        )
+
+    def _fallback_decision(self, state: Any, reason: str = "") -> Decision:
+        return Decision(
+            ACTION_CALL_TOOL, self._fallback,
+            {"original": state.original},
+            reason or f"检测到 {len(state.issues)} 处违规，回退原文",
+        )
+
+    @staticmethod
+    def _target_turn(state: Any) -> Optional[int]:
+        msgs = list((state.dialogue or {}).get("messages") or [])
+        for issue in state.issues:
+            turn = (issue or {}).get("turn")
+            if isinstance(turn, bool) or not isinstance(turn, int):
+                continue
+            if 0 <= turn < len(msgs) and isinstance(msgs[turn], dict) \
+                    and msgs[turn].get("role") == "assistant":
+                return turn
+        return None
 
 
 class LLMPolicyError(RuntimeError):

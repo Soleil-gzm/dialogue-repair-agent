@@ -6,10 +6,10 @@
 import pytest
 
 from agent.benchmark.agent_eval import (
-    A3, A3L, A4, ArmResult, build_runtime, run_arm,
+    A3, A3L, A3R, A4, ArmResult, build_runtime, run_arm,
 )
 from agent.benchmark.defects import generate
-from agent.runtime.llm import LLMResponse
+from agent.runtime.llm import FakeLLMClient, LLMResponse
 
 
 class _CyclicClient:
@@ -46,6 +46,8 @@ class TestBuildRuntime:
     def test_llm_arms_require_client(self):
         with pytest.raises(ValueError):
             build_runtime(A3L)
+        with pytest.raises(ValueError):
+            build_runtime(A3R)
         with pytest.raises(ValueError):
             build_runtime(A4)
 
@@ -116,6 +118,27 @@ class TestLLMArmMetrics:
         assert result.arm == A3L
         assert result.tokens > 0
         assert all(row["detected"] == 0 for row in result.per_type.values())
+
+
+class TestRewriteArm:
+    def test_clean_samples_skip_llm(self, dataset):
+        base, _ = dataset
+        client = FakeLLMClient(default="not-json")
+        result = run_arm(A3R, base, [], client=client)
+
+        assert result.clean_total == len(base)
+        assert result.clean_flagged == 0
+        assert client.call_count == 0
+        assert result.tokens == 0
+
+    def test_failed_rewrite_falls_back_to_block(self, dataset):
+        base, defects = dataset
+        result = run_arm(A3R, base, defects, client=FakeLLMClient(default="not-json"))
+
+        # 结构类缺陷若可重写则重写失败回退，若不可定位则直接回退，两者都算挡住
+        assert result.recall("D3_fact_conflict") == 1.0
+        assert result.recall("D6_missing_response") == 1.0
+        assert result.failed == 0
 
 
 class TestSerialization:

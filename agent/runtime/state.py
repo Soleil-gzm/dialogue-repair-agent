@@ -28,6 +28,8 @@ class AgentState:
 
     history: List[Dict[str, Any]] = field(default_factory=list)
     issues: List[Dict[str, Any]] = field(default_factory=list)
+    # 只增不减：修复成功后 issues 会被清空，但"曾经检出过"仍要能计入检测指标
+    seen_issues: List[Dict[str, Any]] = field(default_factory=list)
     status: str = STATUS_RUNNING
     result_dialogue: Optional[Dict[str, Any]] = None
 
@@ -61,6 +63,7 @@ class AgentState:
         self.history.append({
             "tool": tool,
             "arg_keys": sorted(args.keys()),
+            "turn": args.get("turn"),
             "ok": bool(result.get("ok", True)),
             "terminal": bool(result.get("terminal", False)),
         })

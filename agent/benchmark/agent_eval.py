@@ -1,17 +1,18 @@
-"""Agent 臂评测（A3 / A3L / A4）
+"""Agent 臂评测（A3 / A3L / A3R / A4）
 
 在同一缺陷集上跑**完整决策循环**，产出每类缺陷的检出率、阻断率、干净样本误报与成本。
 
-三个臂，按单变量原则逐层加因子：
+四个臂，按单变量原则逐层加因子：
 
 | 臂 | 决策策略 | 工具 | 回答的问题 |
 |---|---|---|---|
 | `A3`   | 规则（确定性） | 确定性校验（无判官） | 不用 LLM 能做到什么 |
 | `A3L`  | LLM function calling | 确定性校验（无判官） | 仅换决策者，值不值 |
+| `A3R`  | 规则（多轮修复） | 确定性校验 + rewrite_segment | 给规则策略补上修复工具后能走多远 |
 | `A4`   | LLM function calling | 确定性校验 + 语义判官 | 语义能力带来的增量 |
 
 口径：
-- **detected** = 跑完循环后存在违规记录（说明看见问题了）
+- **detected** = 循环期间曾经记录到违规（说明看见问题了，修复成功也算）
 - **blocked**  = 最终回退原文（说明真的挡住并保住了数据）
 - 干净样本的 blocked 即误报
 
@@ -28,20 +29,24 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..eval.judge import JUDGE_VERSION, LLMJudge
+from ..runtime.budget import Budget
 from ..runtime.policy import LLMPolicy, RulePolicy
 from ..runtime.registry import ToolRegistry
 from ..tools import register_all
+from ..tools.rewrite_segment import REWRITE_SEGMENT, make_rewrite_segment
 from .fingerprint import evaluator_fingerprint, input_fingerprint
 from .manifest import build_manifest, write_manifest
 
 A3 = "A3"
 A3L = "A3L"
+A3R = "A3R"
 A4 = "A4"
-ARMS = (A3, A3L, A4)
+ARMS = (A3, A3L, A3R, A4)
 
 ARM_DESCRIPTIONS = {
     A3: "规则策略 + 确定性工具",
     A3L: "LLM 决策 + 确定性工具",
+    A3R: "规则多轮策略 + 确定性工具 + rewrite_segment",
     A4: "LLM 决策 + 确定性工具 + 语义判官",
 }
 
@@ -110,6 +115,19 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
     if client is None:
         raise ValueError(f"臂 {arm} 需要注入 LLMClient")
 
+    if arm == A3R:
+        register_all()
+        ToolRegistry.register(make_rewrite_segment(client, run_id=run_id))
+        return _runtime(
+            RulePolicy(rewrite_tool=REWRITE_SEGMENT),
+            budget=Budget(
+                max_iterations=20,
+                max_tool_calls=24,
+                max_tokens=20000,
+                max_wall_clock_s=300.0,
+            ),
+        )
+
     if arm == A3L:
         register_all()
     else:
@@ -118,10 +136,10 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
     return _runtime(LLMPolicy(client, run_id=run_id))
 
 
-def _runtime(policy):
+def _runtime(policy, budget: Optional[Budget] = None):
     from ..runtime.loop import AgentRuntime
 
-    return AgentRuntime(policy)
+    return AgentRuntime(policy, budget=budget)
 
 
 def run_arm(
@@ -161,7 +179,7 @@ def run_arm(
             result.failed += 1
         if r.status == "stopped":
             result.stopped += 1
-        if r.issues:
+        if r.issues or r.seen_issues:
             row["detected"] += 1
         if r.status == "fallback":
             row["blocked"] += 1
@@ -225,7 +243,7 @@ def main(argv=None) -> int:
             print(f"[ERROR] 臂 {args.arm} 需要 --live（会消耗 token）", file=sys.stderr)
             return 2
         from ..runtime.config import LLMSettings, load_dotenv
-        from ..runtime.deepseek import DeepSeekClient
+        from ..runtime.deepseek import DeepSeekClient, build_stage_clients
         from ..runtime.ledger import TokenLedger
 
         load_dotenv(root / ".env")
@@ -234,7 +252,9 @@ def main(argv=None) -> int:
             print("[ERROR] 未找到 DEEPSEEK_API_KEY", file=sys.stderr)
             return 2
         ledger = TokenLedger(root / "logs" / "agent" / f"ledger_{args.arm}.jsonl")
-        client = DeepSeekClient(settings=settings, ledger=ledger)
+        # A3R 是 stage 路由工厂的第一个消费者：重写走 generate 侧
+        client = (build_stage_clients(ledger=ledger) if args.arm == A3R
+                  else DeepSeekClient(settings=settings, ledger=ledger))
         model_name = settings.model
 
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,

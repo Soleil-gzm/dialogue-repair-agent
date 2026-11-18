@@ -43,6 +43,7 @@ class AgentResult:
     tool_calls: int = 0
     tokens: int = 0
     issues: List[Dict[str, Any]] = field(default_factory=list)
+    seen_issues: List[Dict[str, Any]] = field(default_factory=list)
     trace: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -187,6 +188,7 @@ class AgentRuntime:
             tool_calls=state.budget.tool_calls,
             tokens=state.budget.tokens,
             issues=list(state.issues),
+            seen_issues=list(state.seen_issues),
             trace=self.trace.records,
         )
 
@@ -194,10 +196,16 @@ class AgentRuntime:
     @staticmethod
     def _absorb(state: AgentState, tool: str, args: Dict[str, Any],
                 result: Dict[str, Any]) -> None:
-        """把工具结果吸收进状态：抽出一致性违规，接收回退结果。"""
+        """把工具结果吸收进状态：抽出违规、接收重写与回退结果。"""
         if not result.get("ok", True):
-            for v in result.get("violations", []) or []:
-                state.issues.append(v)
+            violations = list(result.get("violations", []) or [])
+            state.seen_issues.extend(violations)
+            # 重写失败的违规不是"待修复项"，否则策略会对着同一处反复重写
+            if tool != "rewrite_segment":
+                state.issues.extend(violations)
+        if result.get("status") == "rewritten" and isinstance(result.get("dialogue"), dict):
+            state.dialogue = result["dialogue"]
+            state.issues.clear()
         if result.get("status") == FALLBACK and isinstance(result.get("dialogue"), dict):
             state.result_dialogue = result["dialogue"]
             state.status = FALLBACK
