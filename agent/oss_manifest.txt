@@ -28,6 +28,7 @@ tools/__init__.py
 tools/check_consistency.py
 tools/check_coherence.py
 tools/fallback_keep.py
+tools/rewrite_segment.py
 runtime/__init__.py
 runtime/llm.py
 runtime/registry.py
@@ -42,6 +43,8 @@ runtime/policy.py
 runtime/loop.py
 runtime/checkpoint.py
 fixtures/public/base_v1.json
+fixtures/public/dev_v1.json
+fixtures/public/test_v1.json
 fixtures/public/defects_v1.jsonl
 tests/__init__.py
 tests/conftest.py
@@ -58,6 +61,9 @@ tests/test_judge.py
 tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_agent_eval.py
+tests/test_fixture_split.py
+tests/test_rewrite_segment.py
+tests/test_repair_loop.py
 tests/test_report.py
 tests/test_budget.py
 tests/test_config.py
