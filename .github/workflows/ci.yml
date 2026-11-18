@@ -16,21 +16,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install
+      # 依赖锁定：严格按 uv.lock 安装，两机与 CI 用同一份解析结果
+      - name: Install (locked)
+        run: uv sync --frozen --all-extras
+
+      # 入库锁必须由 clean 工作区生成，否则 git_commit 描述不了产生指纹的代码
+      - name: Assert committed baseline lock is clean
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          uv run python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("agent/benchmark/baseline/baseline_lock.json")
+          lock = json.loads(p.read_text(encoding="utf-8"))
+          dirty = (lock.get("code") or {}).get("dirty")
+          assert dirty is False, (
+              f"入库锁必须是 clean 状态（当前 dirty={dirty}）："
+              "请先提交代码，再从 clean 工作区重新生成 baseline_lock"
+          )
+          print("[OK] baseline lock is clean")
+          PY
 
       - name: Run tests
-        run: python -m pytest
+        run: uv run pytest
 
       - name: Reproduce frozen baseline (A0)
         run: |
-          python -m agent.benchmark.run \
+          uv run python -m agent.benchmark.run \
             --input agent/fixtures/public/base_v1.json \
             --arms A0 \
             --verify-arm A0

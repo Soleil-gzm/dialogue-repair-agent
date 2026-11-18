@@ -99,4 +99,27 @@ class TestBuildLock:
         )
         for key in ("input", "evaluator", "adapter", "arms"):
             assert key in lock
-        assert lock["lock_version"] == "1.0"
+        assert lock["lock_version"] == "2.0"
+        assert lock["generated_at"]
+
+
+class TestEvaluatorDerivedFromCode:
+    def test_defaults_capture_code_and_prompt_hash(self):
+        fp = evaluator_fingerprint(rules_version="1", judge_prompt_version="v1",
+                                   judge_model="m", rubric_version="1")
+        assert len(fp["rules_sha256"]) == 64
+        assert len(fp["judge_prompt_sha256"]) == 64
+
+    def test_rules_code_change_changes_fingerprint(self):
+        common = dict(rules_version="1", judge_prompt_version="v1",
+                      judge_model="m", rubric_version="1")
+        a = evaluator_fingerprint(**common, rules_sha256="a" * 64, prompt_sha256="b" * 64)
+        b = evaluator_fingerprint(**common, rules_sha256="c" * 64, prompt_sha256="b" * 64)
+        assert a["sha256"] != b["sha256"]
+
+    def test_prompt_change_changes_fingerprint(self):
+        common = dict(rules_version="1", judge_prompt_version="v1",
+                      judge_model="m", rubric_version="1")
+        a = evaluator_fingerprint(**common, rules_sha256="a" * 64, prompt_sha256="b" * 64)
+        b = evaluator_fingerprint(**common, rules_sha256="a" * 64, prompt_sha256="c" * 64)
+        assert a["sha256"] != b["sha256"]

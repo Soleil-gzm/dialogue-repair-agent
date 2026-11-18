@@ -7,12 +7,17 @@
 产出：
     {lock_dir}/baseline_lock.json   四元组指纹（只读，入库）
     {out}/report/arm_results.json   各臂产物指纹与规模（不入库）
+    {out}/report/run_manifest.json  环境溯源（机器/依赖/模型，不入库、不判等）
 """
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+from agent.eval.judge import JUDGE_VERSION
+from agent.runtime.state import dialogue_key
 
 from .arms import run_a0, run_a1
 from .fingerprint import (
@@ -22,11 +27,12 @@ from .fingerprint import (
     build_lock,
 )
 from .lock import LockViolation, write_lock, read_lock, verify_lock
+from .manifest import build_manifest, write_manifest
 
 
 DEFAULT_EVALUATOR = dict(
     rules_version="1.0.0",
-    judge_prompt_version="v1",
+    judge_prompt_version=JUDGE_VERSION,
     judge_model="deepseek-chat",
     rubric_version="1.0",
     judge_temperature=0.0,
@@ -103,6 +109,8 @@ def main(argv=None) -> int:
                     help="只校验单个臂的产物是否复现（用于可独立运行的环境，如仅 A0）")
     ap.add_argument("--force", action="store_true", help="覆盖 lock（需 --reason）")
     ap.add_argument("--reason", default="")
+    ap.add_argument("--allow-dirty", action="store_true",
+                    help="允许在工作区有未提交改动时生成锁（仅临时调试，入库锁必须 clean）")
     args = ap.parse_args(argv)
 
     in_path = Path(args.input).resolve()
@@ -134,7 +142,15 @@ def main(argv=None) -> int:
         }
 
     lock = build_lock(
-        input_fp=input_fingerprint(in_path, root=Path.cwd()),
+        input_fp=input_fingerprint(
+            in_path,
+            root=Path.cwd(),
+            # 当前不做抽样，但键集合与种子必须入锁：否则"换了一批样本"无法被发现
+            sample_keys=[dialogue_key(d) for d in dialogues],
+            n_sampled=len(dialogues),
+            sample_seed=args.seed,
+            strata=[],
+        ),
         evaluator_fp=evaluator_fingerprint(**DEFAULT_EVALUATOR),
         adapter_fp=adapter_fingerprint(
             **DEFAULT_ADAPTER, profile_config=PUBLIC_DOMAIN_PROFILE
@@ -179,7 +195,10 @@ def main(argv=None) -> int:
         return 0
 
     try:
-        write_lock(lock, lock_path, force=args.force, reason=args.reason)
+        write_lock(
+            lock, lock_path, force=args.force, reason=args.reason,
+            allow_dirty=args.allow_dirty,
+        )
     except (LockViolation, ValueError) as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         return 3
@@ -198,7 +217,23 @@ def main(argv=None) -> int:
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
+    # manifest 只溯源不判等：记录机器/依赖/模型，不入库、不参与 verify（ADR D7）
+    manifest_path = write_manifest(
+        build_manifest(
+            root=Path.cwd(),
+            profile=args.profile,
+            arms=arms_wanted,
+            models={
+                "judge": DEFAULT_EVALUATOR["judge_model"],
+                "generate": os.environ.get("DEEPSEEK_MODEL") or None,
+                "ollama": os.environ.get("OLLAMA_MODEL") or None,
+            },
+        ),
+        report_dir / "run_manifest.json",
+    )
+
     print(f"[OK] lock -> {lock_path}")
+    print(f"[OK] manifest -> {manifest_path}")
     for n, r in results.items():
         print(f"  {n}: in={r.n_in} out={r.n_out} sha={r.artifact_sha256[:16]}…")
     return 0

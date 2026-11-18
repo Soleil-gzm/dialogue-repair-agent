@@ -93,17 +93,40 @@ def evaluator_fingerprint(
     judge_model: str,
     rubric_version: str,
     judge_temperature: float = 0.0,
+    rules_sha256: Optional[str] = None,
+    prompt_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """评估器指纹：换标准就必须换指纹。"""
+    """评估器指纹：换标准就必须换指纹。
+
+    版本号是手写的，改实现忘改版本号是常态；因此额外纳入源码哈希与 prompt
+    文本哈希，让"换尺子"必然被 `--verify` 捕获，而不是依赖人记得升版本。
+    """
     body = {
         "rules_version": rules_version,
         "judge_prompt_version": judge_prompt_version,
         "judge_model": judge_model,
         "rubric_version": rubric_version,
         "judge_temperature": judge_temperature,
+        "rules_sha256": rules_sha256 if rules_sha256 is not None else source_sha256("eval/rules.py"),
+        "judge_prompt_sha256": (
+            prompt_sha256 if prompt_sha256 is not None else judge_prompt_sha256()
+        ),
     }
     body["sha256"] = sha256_obj(body)
     return body
+
+
+def source_sha256(relpath: str) -> str:
+    """评估器实现文件的源码哈希（路径相对 agent/ 包根）。"""
+    root = Path(__file__).resolve().parents[1]
+    return sha256_file(root / relpath)
+
+
+def judge_prompt_sha256() -> str:
+    """判官 prompt 文本哈希：prompt 变了指纹就变，不依赖版本号是否记得改。"""
+    from agent.eval.judge import SYSTEM_PROMPT, USER_TEMPLATE
+
+    return sha256_obj({"system": SYSTEM_PROMPT, "user": USER_TEMPLATE})
 
 
 def adapter_fingerprint(
@@ -143,8 +166,11 @@ def build_lock(
     profile: str = "standard",
 ) -> Dict[str, Any]:
     """组装 baseline_lock。arms 形如 {"A0": {"config_sha256":..., "prompt_version": null}}"""
+    from datetime import datetime, timezone
+
     return {
-        "lock_version": "1.0",
+        "lock_version": "2.0",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "profile": profile,
         "code": code or {"git_commit": None, "dirty": None},
         "input": input_fp,

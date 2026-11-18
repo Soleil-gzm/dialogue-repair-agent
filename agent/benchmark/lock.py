@@ -37,15 +37,30 @@ def _comparable(lock: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def write_lock(lock: Dict[str, Any], path, *, force: bool = False, reason: str = "") -> Path:
+def write_lock(
+    lock: Dict[str, Any],
+    path,
+    *,
+    force: bool = False,
+    reason: str = "",
+    allow_dirty: bool = False,
+) -> Path:
     """写入 lock。已存在且内容不同时默认拒绝。
 
     Args:
         force: 显式覆盖开关
         reason: force=True 时必填，用于写入 lock_changelog
+        allow_dirty: 允许在工作区有未提交改动时生成锁（默认拒绝）
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
+
+    dirty = (lock.get("code") or {}).get("dirty")
+    if dirty is True and not allow_dirty:
+        raise LockViolation(
+            "工作区有未提交改动，拒绝生成 baseline_lock："
+            "git_commit 无法完整描述产生指纹的代码。请先提交，或显式 --allow-dirty 仅作临时调试。"
+        )
 
     if p.exists():
         existing = read_lock(p)

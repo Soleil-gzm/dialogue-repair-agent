@@ -27,10 +27,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..eval.judge import LLMJudge
+from ..eval.judge import JUDGE_VERSION, LLMJudge
 from ..runtime.policy import LLMPolicy, RulePolicy
 from ..runtime.registry import ToolRegistry
 from ..tools import register_all
+from .fingerprint import evaluator_fingerprint, input_fingerprint
+from .manifest import build_manifest, write_manifest
 
 A3 = "A3"
 A3L = "A3L"
@@ -205,6 +207,7 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     root = Path.cwd()
+    pub = root / "agent" / "fixtures" / "public"
     base, defects = _load_public(root)
     if args.limit > 0:
         kept, counts = [], {}
@@ -216,6 +219,7 @@ def main(argv=None) -> int:
         defects = kept
 
     client = judge = ledger = None
+    model_name = None
     if args.arm != A3:
         if not args.live:
             print(f"[ERROR] 臂 {args.arm} 需要 --live（会消耗 token）", file=sys.stderr)
@@ -231,6 +235,7 @@ def main(argv=None) -> int:
             return 2
         ledger = TokenLedger(root / "logs" / "agent" / f"ledger_{args.arm}.jsonl")
         client = DeepSeekClient(settings=settings, ledger=ledger)
+        model_name = settings.model
 
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
                      run_id=f"ablation_{args.arm}")
@@ -238,11 +243,35 @@ def main(argv=None) -> int:
         ledger.close()
 
     payload = result.to_dict()
+    # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
+    payload["fingerprint"] = {
+        "input": {
+            "base": input_fingerprint(pub / "base_v1.json", root=root),
+            "defects": input_fingerprint(pub / "defects_v1.jsonl", root=root),
+        },
+        "evaluator": evaluator_fingerprint(
+            rules_version="1.0.0",
+            judge_prompt_version=JUDGE_VERSION,
+            judge_model=model_name or "none",
+            rubric_version="1.0",
+            judge_temperature=0.0,
+        ),
+    }
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(text + "\n", encoding="utf-8")
+        write_manifest(
+            build_manifest(
+                root=root,
+                profile="ablation",
+                arms=[args.arm],
+                models={"generate": model_name, "judge": model_name if args.arm == A4 else None},
+                extra={"limit": args.limit, "n_defects": len(defects), "n_base": len(base)},
+            ),
+            out.parent / f"manifest_{args.arm}.json",
+        )
         print(f"[OK] {args.arm} -> {out}")
     else:
         print(text)

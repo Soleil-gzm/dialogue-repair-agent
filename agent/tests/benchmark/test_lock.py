@@ -98,3 +98,18 @@ class TestVerifyLock:
         # commit 变化必须报出
         c = _lock(); c["code"] = {"git_commit": "def", "dirty": True}
         assert any("code" in d for d in verify_lock(p, c))
+
+
+class TestDirtyGuard:
+    def test_refuses_to_write_dirty_lock(self, tmp_path):
+        p = tmp_path / "baseline_lock.json"
+        lock = _lock(); lock["code"] = {"git_commit": "abc", "dirty": True}
+        with pytest.raises(LockViolation, match="未提交改动"):
+            write_lock(lock, p)
+        assert not p.exists()
+
+    def test_allow_dirty_explicitly(self, tmp_path):
+        p = tmp_path / "baseline_lock.json"
+        lock = _lock(); lock["code"] = {"git_commit": "abc", "dirty": True}
+        write_lock(lock, p, allow_dirty=True)
+        assert read_lock(p)["code"]["dirty"] is True

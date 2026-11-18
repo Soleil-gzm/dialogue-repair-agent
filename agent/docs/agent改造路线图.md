@@ -41,6 +41,7 @@
 ## 2. Sprint 0：锁加固（预计半天，最优先）
 
 > 依据 D7。**不是从零建 CI**：`ci.yml` 已在跑 pytest + A0 复现，`pyproject.toml` 已有依赖声明。S0 只补齐让"换机器不影响结论"成立的四件事。
+> 状态（2026-11-18）：代码与 CI 已落地；`baseline_lock.json` 待从 clean 提交重建（旧锁为 v1.0 且 dirty）。
 
 ### 2.1 抽样与评估器指纹（2 小时）
 
@@ -50,13 +51,14 @@
 
 ### 2.2 拒绝 dirty 入库 + 环境 manifest（2 小时）
 
-- 入库锁必须是 clean 状态：CI 断言 `code.dirty=false`，`--verify` 不再忽略 dirty
+- 生成锁时直接拒绝 dirty（`--allow-dirty` 仅临时调试）；CI 断言入库锁 `code.dirty=false`
 - 新增 `run_manifest.json`（不入库）：machine id、OS、python、依赖锁 sha、ollama 版本/模型 digest、耗时、P50/P95
 - 判定规则：`offline` / `replay` 档逐字节一致；`live` 档只比四元组指纹
 
 ### 2.3 依赖与配置契约（1 小时）
 
-- `uv.lock` 提交，两机统一 `uv sync`；Ollama 模型钉死完整 tag，digest 记入 manifest
+- `uv.lock` 提交，两机统一 `uv sync`；CI 用 `uv sync --frozen --all-extras` 严格按锁安装
+- Ollama 模型钉死完整 tag，digest 记入 manifest
 - `.env.example` 作契约（`DEEPSEEK_MODEL` / `JUDGE_MODEL` / `OLLAMA_BASE_URL`）；代码中永不出现"4060/4090"
 
 ### 2.4 迁出：stage 路由双模型 → S1
