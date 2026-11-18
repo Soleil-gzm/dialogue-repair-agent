@@ -87,8 +87,8 @@ docs/architecture/Benchmark评测设计.md
 docs/archive/README.md
 docs/archive/v0.1-2026-11-12/对话数据Agent化改进计划书.md
 docs/archive/v1.0-2026-11-12/Benchmark专项设计方案.md
-docs/agent决策记录ADR.md
-docs/agent改造路线图.md
+docs/decisions/决策记录ADR.md
+docs/decisions/改造路线图.md
 
 # ---------- BUILD ----------
 # 内部发布工具与主工程胶水层：只在主工程环境使用，不随开源仓库分发
