@@ -8,6 +8,8 @@ build/
 dist/
 .venv/
 .trae/documents/
+# 含真实业务标识的历史文档，仅本地留存
+agent/docs/archive/private/
 # 本地密钥
 .env
 .env.local

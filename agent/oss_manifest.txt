@@ -89,6 +89,7 @@ docs/architecture/Benchmark评测设计.md
 docs/archive/README.md
 docs/archive/v0.1-2026-11-12/对话数据Agent化改进计划书.md
 docs/archive/v1.0-2026-11-12/Benchmark专项设计方案.md
+docs/archive/v1.0-2026-11-12/旧文档索引.md
 docs/decisions/决策记录ADR.md
 docs/decisions/改造路线图.md
 docs/guides/部署与运行指南.md
@@ -110,7 +111,7 @@ tests/test_export.py
 # 黑名单本身含敏感词，仅内部校验使用
 oss_denylist.txt
 # 含真实业务标识（机构名/产品名/热线/编号/业务话术），永久留私有
-docs/Agent化改造总纲与Benchmark方案.md
-docs/Agent化技术评估与落地方案.md
-docs/数据策略评估与决策.md
-docs/数据格式适配与兼容规范.md
+docs/archive/private/Agent化改造总纲与Benchmark方案.md
+docs/archive/private/Agent化技术评估与落地方案.md
+docs/archive/private/数据策略评估与决策.md
+docs/archive/private/数据格式适配与兼容规范.md
