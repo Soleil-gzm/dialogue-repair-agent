@@ -4,7 +4,7 @@
 并让 Benchmark 在无密钥环境下可复现。
 """
 
-from agent.runtime.llm import FakeLLMClient, LLMResponse
+from agent.runtime.llm import FakeLLMClient, LLMResponse, StageRoutedClient
 
 
 class TestFakeClient:
@@ -54,3 +54,30 @@ class TestFakeClient:
         specs = [{"type": "function", "function": {"name": "t"}}]
         c.chat([{"role": "user", "content": "x"}], tools=specs)
         assert c.calls[0]["tools"] == specs
+
+
+class TestStageRouting:
+    def test_routes_judge_stage(self):
+        gen, judge = FakeLLMClient(default="gen"), FakeLLMClient(default="judge")
+        c = StageRoutedClient(gen, judge)
+        msgs = [{"role": "user", "content": "x"}]
+
+        assert c.chat(msgs, stage="judge").text == "judge"
+        assert c.chat(msgs, stage="generate").text == "gen"
+        assert c.chat(msgs).text == "gen"
+        assert gen.call_count == 2 and judge.call_count == 1
+
+    def test_judge_defaults_to_generate(self):
+        gen = FakeLLMClient(default="gen")
+        c = StageRoutedClient(gen)
+        assert c.chat([{"role": "user", "content": "x"}], stage="judge").text == "gen"
+
+    def test_build_stage_clients_uses_judge_model(self):
+        from agent.runtime.deepseek import build_stage_clients
+
+        env = {"DEEPSEEK_API_KEY": "sk-test", "DEEPSEEK_MODEL": "gen",
+               "JUDGE_MODEL": "judge-model"}
+        c = build_stage_clients(environ=env)
+        assert c.generate_client.settings.model == "gen"
+        assert c.judge_client.settings.model == "judge-model"
+        assert c.judge_client.settings.temperature == 0.0

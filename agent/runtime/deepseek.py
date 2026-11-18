@@ -18,9 +18,9 @@ from typing import Any, Dict, List, Optional
 import httpx
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
-from .config import LLMSettings
+from .config import LLMSettings, judge_settings
 from .ledger import LedgerEntry, Pricing, TokenLedger
-from .llm import LLMResponse
+from .llm import LLMResponse, StageRoutedClient
 from .pricing import select_pricing
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
@@ -298,3 +298,22 @@ class DeepSeekClient:
             ok=ok,
             error_type=error_type,
         ))
+
+
+def build_stage_clients(environ=None, ledger: Optional[TokenLedger] = None,
+                        transport=None) -> StageRoutedClient:
+    """装配 generate / judge 双客户端，共享同一本 token 账。
+
+    两个客户端各自持有响应缓存，避免把判官响应复用到生成侧。
+    """
+    gen_settings = LLMSettings.from_env(environ)
+    judge_cfg = judge_settings(environ)
+    # 从同一个 environ 解析密钥，缺失时在这里明确失败一次
+    api_key = gen_settings.api_key(environ)
+    generate = DeepSeekClient(
+        settings=gen_settings, api_key=api_key, ledger=ledger, transport=transport,
+    )
+    judge = DeepSeekClient(
+        settings=judge_cfg, api_key=api_key, ledger=ledger, transport=transport,
+    )
+    return StageRoutedClient(generate, judge)

@@ -6,7 +6,7 @@
 import pytest
 
 from agent.runtime.config import (
-    LLMSettings, MissingCredentials, load_dotenv, parse_dotenv,
+    LLMSettings, MissingCredentials, judge_settings, load_dotenv, parse_dotenv,
 )
 
 
@@ -81,3 +81,15 @@ class TestLLMSettings:
         assert LLMSettings.from_env().has_key() is False
         monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
         assert LLMSettings.from_env().has_key() is True
+
+
+class TestJudgeSettings:
+    def test_overrides_model_and_forces_zero_temperature(self):
+        s = judge_settings({"DEEPSEEK_MODEL": "gen", "JUDGE_MODEL": "judge-model"})
+        assert s.model == "judge-model"
+        assert s.temperature == 0.0
+
+    def test_falls_back_to_generate_model(self):
+        s = judge_settings({"DEEPSEEK_MODEL": "gen"})
+        assert s.model == "gen"
+        assert s.temperature == 0.0

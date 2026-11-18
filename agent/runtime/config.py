@@ -113,3 +113,11 @@ class LLMSettings:
             "json_mode": self.json_mode,
             "has_key": self.has_key(),
         }
+
+
+def judge_settings(environ: Optional[Mapping[str, str]] = None) -> LLMSettings:
+    """判官侧配置：JUDGE_MODEL 覆盖模型，判官必须确定性（温度 0）。"""
+    env = os.environ if environ is None else environ
+    base = LLMSettings.from_env(env)
+    model = (env.get("JUDGE_MODEL") or "").strip()
+    return replace(base, model=model or base.model, temperature=0.0)

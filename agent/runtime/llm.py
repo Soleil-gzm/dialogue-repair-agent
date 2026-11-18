@@ -53,6 +53,22 @@ class LLMClient(Protocol):
         ...
 
 
+class StageRoutedClient:
+    """按 stage 把请求路由到不同客户端：判官与生成器可以不是同一个模型。
+
+    只做路由，不改写请求语义；judge_client 缺省时退化到生成侧。
+    """
+
+    def __init__(self, generate_client: LLMClient,
+                 judge_client: Optional[LLMClient] = None):
+        self.generate_client = generate_client
+        self.judge_client = judge_client or generate_client
+
+    def chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> LLMResponse:
+        client = self.judge_client if kwargs.get("stage") == "judge" else self.generate_client
+        return client.chat(messages, **kwargs)
+
+
 class FakeLLMClient:
     """确定性假客户端。
 
