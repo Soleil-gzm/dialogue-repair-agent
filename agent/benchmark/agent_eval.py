@@ -199,7 +199,12 @@ def run_a2_dialogue(client: Any, dialogue: Dict[str, Any],
 
 
 def _parse_a2_output(text: str, original: Dict[str, Any]) -> Dict[str, Any]:
-    """解析 A2 模型输出——宽松：找到第一个 {...} 块就尝试 parse。"""
+    """解析 A2 模型输出。
+
+    只采纳 assistant 的 content；system / user 与内部标注字段（如 loss）
+    一律以原文为准。模型回显时丢字段或改动不可改的消息都不应被算作"改坏"。
+    结构与原文对不上时判为 parse_error。
+    """
     text = (text or "").strip()
     # 直接 parse
     try:
@@ -216,11 +221,28 @@ def _parse_a2_output(text: str, original: Dict[str, Any]) -> Dict[str, Any]:
         else:
             return {"ok": False}
     msgs = data.get("messages") or []
-    if not isinstance(msgs, list) or len(msgs) < 2:
+    orig_msgs = original.get("messages") or []
+    if not isinstance(msgs, list) or len(msgs) != len(orig_msgs) or not orig_msgs:
         return {"ok": False}
+
+    merged: List[Dict[str, Any]] = []
+    for orig, new in zip(orig_msgs, msgs):
+        if not isinstance(new, dict) or new.get("role") != orig.get("role"):
+            return {"ok": False}
+        if orig.get("role") == "assistant":
+            entry = dict(orig)
+            content = new.get("content")
+            if not isinstance(content, str):
+                return {"ok": False}
+            entry["content"] = content
+            merged.append(entry)
+        else:
+            # 模型不得改 system / user；按 prompt 约定强制回原文
+            merged.append(dict(orig))
+
     # 保留原始 dialogue 里的 extra 字段（scenario tag 等）
     out = dict(original)
-    out["messages"] = msgs
+    out["messages"] = merged
     return {"ok": True, "dialogue": out}
 
 

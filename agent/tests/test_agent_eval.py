@@ -6,7 +6,7 @@
 import pytest
 
 from agent.benchmark.agent_eval import (
-    A3, A3L, A3R, A4, ArmResult, build_runtime, run_arm,
+    A3, A3L, A3R, A4, ArmResult, _parse_a2_output, build_runtime, run_arm,
 )
 from agent.benchmark.defects import generate
 from agent.runtime.llm import FakeLLMClient, LLMResponse
@@ -139,6 +139,52 @@ class TestRewriteArm:
         assert result.recall("D3_fact_conflict") == 1.0
         assert result.recall("D6_missing_response") == 1.0
         assert result.failed == 0
+
+
+class TestA2Parsing:
+    """A2 只采纳 assistant content：模型丢标注字段或动不可改消息都不算改坏。"""
+
+    ORIGINAL = {
+        "messages": [
+            {"role": "system", "content": "角色说明\n"},
+            {"role": "user", "content": "订单什么时候到？"},
+            {"role": "assistant", "content": "旧回复", "loss": "True"},
+        ]
+    }
+
+    def test_keeps_original_system_user_and_metadata(self):
+        model_out = (
+            '{"messages": ['
+            '{"role": "system", "content": "角色说明"},'   # 丢了末尾换行
+            '{"role": "user", "content": "订单啥时候到？"},'  # 擅自改写用户话
+            '{"role": "assistant", "content": "新回复"}'      # 丢了 loss 字段
+            "]}"
+        )
+        parsed = _parse_a2_output(model_out, self.ORIGINAL)
+        assert parsed["ok"] is True
+        msgs = parsed["dialogue"]["messages"]
+        assert msgs[0] == self.ORIGINAL["messages"][0]
+        assert msgs[1] == self.ORIGINAL["messages"][1]
+        assert msgs[2]["content"] == "新回复"
+        assert msgs[2]["loss"] == "True"
+
+    def test_role_mismatch_is_parse_error(self):
+        model_out = '{"messages": [{"role": "system", "content": "x"}, {"role": "assistant", "content": "y"}, {"role": "user", "content": "z"}]}'
+        assert _parse_a2_output(model_out, self.ORIGINAL)["ok"] is False
+
+    def test_length_mismatch_is_parse_error(self):
+        model_out = '{"messages": [{"role": "system", "content": "x"}]}'
+        assert _parse_a2_output(model_out, self.ORIGINAL)["ok"] is False
+
+    def test_markdown_fenced_output_still_parses(self):
+        model_out = (
+            "```json\n"
+            '{"messages": [{"role": "system", "content": "x"}, '
+            '{"role": "user", "content": "y"}, '
+            '{"role": "assistant", "content": "ok"}]}\n'
+            "```"
+        )
+        assert _parse_a2_output(model_out, self.ORIGINAL)["ok"] is True
 
 
 class TestSerialization:
