@@ -347,24 +347,159 @@ def _run_a2(
 
 
 # --------------------------------------------------------------------------
-# CLI
+# L3 跨臂对比（建在 run_arm 之上，复用同一个 ledger 和数据）
 # --------------------------------------------------------------------------
 
-def _load_public(root: Path):
-    pub = root / "agent" / "fixtures" / "public"
-    base = json.loads((pub / "base_v1.json").read_text(encoding="utf-8"))
-    lines = (pub / "defects_v1.jsonl").read_text(encoding="utf-8").strip().split("\n")
-    defects = [json.loads(l) for l in lines if l.strip()]
-    return base, defects
+def compare_arms(
+    arm_a: str,
+    arm_b: str,
+    base: List[dict],
+    defects: List[dict],
+    *,
+    client: Any = None,
+    run_id: str = "compare",
+    ledger: Any = None,
+    metric: str = "blocked",
+) -> Dict[str, Any]:
+    """对比两个臂在同一数据上的 L3 统计。
+
+    Args:
+        metric: "blocked"（默认，最严格门禁指标）| "detected"（检出指标）| "clean"（干净样本未被标记）
+
+    Returns:
+        包含两个 ArmResult、win_rate 和 mcnemar 结果的字典
+    """
+    # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
+    outcomes_a = _collect_outcomes(
+        arm_a, base, defects, client=client, run_id=f"{run_id}_{arm_a}",
+        ledger=ledger, metric=metric,
+    )
+    outcomes_b = _collect_outcomes(
+        arm_b, base, defects, client=client, run_id=f"{run_id}_{arm_b}",
+        ledger=ledger, metric=metric,
+    )
+
+    # 两边长度一致（同一数据），outcomes 顺序 = defects + base
+    assert len(outcomes_a) == len(outcomes_b)
+
+    from .l3_stats import win_rate, mcnemar
+    wr = win_rate(outcomes_a, outcomes_b)
+    mn = mcnemar(outcomes_a, outcomes_b)
+
+    return {
+        "arms": [arm_a, arm_b],
+        "metric": metric,
+        "n_total": len(outcomes_a),
+        "win_rate": {
+            "wins": wr.wins_a, "losses": wr.wins_b, "ties": wr.ties,
+            "comparable": wr.n_comparable,
+            "point": wr.point, "ci_lower": wr.ci_lower, "ci_upper": wr.ci_upper,
+        },
+        "mcnemar": {
+            "chi2": mn.chi2, "p_value": mn.p_value,
+            "method": mn.method,
+            "n10": mn.n10, "n01": mn.n01, "n11": mn.n11, "n00": mn.n00,
+        },
+        "significance": "显著" if mn.p_value < 0.05 else "不显著",
+        "wilson_interpretation": (
+            f"{arm_a} 对 {arm_b} 的 {metric} 胜率 Wilson 95% CI "
+            f"[{wr.ci_lower:.4f}, {wr.ci_upper:.4f}]，"
+            f"点估计 {wr.point:.4f}（排除 {wr.ties} 平局）"
+        ),
+    }
+
+
+def _collect_outcomes(
+    arm: str,
+    base: List[dict],
+    defects: List[dict],
+    *,
+    client: Any,
+    run_id: str,
+    ledger: Any,
+    metric: str,
+) -> List[bool]:
+    """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome。
+
+    metric='blocked' → defect 样本返回 arm 是否 fallback；clean 样本返回 arm 是否没误报（True=好）
+    metric='detected' → defect 样本返回 arm 是否检出；clean 样本同 blocked
+    metric='clean'   → 只跑 clean 样本，返回是否没被标记
+
+    """
+    # 不走 run_arm（它是 aggregate only），直接调底层路径收集 per-sample
+    outcomes: List[bool] = []
+
+    if arm == A2:
+        return _collect_outcomes_a2(base, defects, client=client, run_id=run_id,
+                                     ledger=ledger, metric=metric)
+
+    runtime = build_runtime(arm, client=client, run_id=run_id)
+
+    # defect samples
+    for record in defects:
+        reference = base[record["base_index"]] if base else None
+        r = runtime.run(record["dialogue"], reference=reference)
+        if metric == "detected":
+            outcomes.append(bool(r.issues or r.seen_issues))
+        else:  # blocked
+            outcomes.append(r.status == "fallback")
+
+    # clean samples
+    for dialogue in base:
+        r = runtime.run(dialogue)
+        # clean 样本：metric='blocked'/'detected' 都看"没被标记"
+        # 即 agent 没误报（status != fallback，也没有 issues）
+        outcomes.append(r.status != "fallback" and not r.issues)
+
+    return outcomes
+
+
+def _collect_outcomes_a2(
+    base: List[dict],
+    defects: List[dict],
+    *,
+    client: Any,
+    run_id: str,
+    ledger: Any,
+    metric: str,
+) -> List[bool]:
+    """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。"""
+    outcomes: List[bool] = []
+
+    for record in defects:
+        reference = base[record["base_index"]] if base else None
+        # pre-A2 违规 = reference 与 dialogue 不一致
+        pre_violations = (check_consistency(
+            before=reference or {}, after=record["dialogue"],
+        ) if reference else [])
+        outcomes.append(bool(pre_violations))
+
+    for dialogue in base:
+        r = run_a2_dialogue(client, dialogue, run_id=run_id + "_c")
+        fidelity = check_consistency(before=dialogue, after=r["dialogue"])
+        outcomes.append(not bool(fidelity) and not r["parse_error"])
+
+    return outcomes
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.benchmark.agent_eval")
-    ap.add_argument("--arm", required=True, choices=list(ARMS))
+    ap.add_argument("--arm", choices=list(ARMS), help="单臂评测")
+    ap.add_argument("--compare", default="",
+                    help="L3 跨臂对比：\"A3,A2\" 或 \"A4,A3L\" 格式")
     ap.add_argument("--live", action="store_true", help="在线臂：需要 .env 中的密钥")
     ap.add_argument("--limit", type=int, default=0, help="每类最多取 N 条（调试用）")
+    ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean"],
+                    help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
     args = ap.parse_args(argv)
+
+    if not args.arm and not args.compare:
+        print("[ERROR] 必须指定 --arm 或 --compare", file=sys.stderr)
+        return 2
+    if args.arm and args.compare:
+        print("[ERROR] --arm 和 --compare 不能同时用", file=sys.stderr)
+        return 2
 
     root = Path.cwd()
     pub = root / "agent" / "fixtures" / "public"
@@ -378,11 +513,20 @@ def main(argv=None) -> int:
                 kept.append(d)
         defects = kept
 
-    client = judge = ledger = None
-    model_name = None
-    if args.arm != A3:
+    # 确定需要 live 的臂
+    need_live: set[str] = set()
+    if args.arm:
+        need_live.add(args.arm)
+    if args.compare:
+        a, b = args.compare.split(",")
+        need_live.update([a.strip(), b.strip()])
+    has_online = any(arm != A3 for arm in need_live)
+
+    client = ledger = None
+    model_name = judge_model_name = None
+    if has_online:
         if not args.live:
-            print(f"[ERROR] 臂 {args.arm} 需要 --live（会消耗 token）", file=sys.stderr)
+            print(f"[ERROR] 包含在线臂，需要 --live（会消耗 token）", file=sys.stderr)
             return 2
         from ..runtime.config import LLMSettings, load_dotenv
         from ..runtime.deepseek import build_stage_clients
@@ -393,15 +537,36 @@ def main(argv=None) -> int:
         if not settings.has_key():
             print("[ERROR] 未找到 DEEPSEEK_API_KEY", file=sys.stderr)
             return 2
-        ledger = TokenLedger(root / "logs" / "agent" / f"ledger_{args.arm}.jsonl")
-        # 所有在线臂统一走 StageRoutedClient：
-        # - A3R rewrite 走 generate 侧（stage != "judge"）
-        # - A4 的 LLMJudge 以 stage="judge" 调用 → 路由到 JUDGE_MODEL 配置
-        # - A3L 只有决策调用 → 走 generate 侧
+        ledger = TokenLedger(root / "logs" / "agent" / f"ledger_compare.jsonl")
         client = build_stage_clients(ledger=ledger)
         model_name = settings.model
         judge_model_name = judge_settings().model
 
+    if args.compare:
+        arm_a, arm_b = [s.strip() for s in args.compare.split(",")]
+        for arm in (arm_a, arm_b):
+            if arm not in ARMS:
+                print(f"[ERROR] 未知臂: {arm}", file=sys.stderr)
+                return 2
+        payload = compare_arms(arm_a, arm_b, base, defects, client=client,
+                               run_id=f"compare_{arm_a}_vs_{arm_b}",
+                               ledger=ledger, metric=args.metric)
+        if ledger:
+            ledger.close()
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        print(payload.get("wilson_interpretation", ""))
+        print(f"  p={payload['mcnemar']['p_value']} ({payload['mcnemar']['method']}), "
+              f"{payload['significance']}")
+        if args.out:
+            out = Path(args.out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(text + "\n", encoding="utf-8")
+            print(f"[OK] {arm_a} vs {arm_b} -> {out}")
+        else:
+            print(text)
+        return 0
+
+    # 单臂评测路径
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
                      run_id=f"ablation_{args.arm}")
     if ledger:
