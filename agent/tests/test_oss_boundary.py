@@ -4,7 +4,6 @@
 1. 清单覆盖全部文件 —— 新增文件必须显式决定公开与否，不能"默认公开"。
 2. PUBLIC 文件不含业务标识 —— 防止脱敏遗漏。
 3. PUBLIC 的 Python 文件不顶层依赖主工程 —— 保证可脱离主工程安装。
-   （A1 臂例外：它在函数体内懒加载 pipeline.*，属对照基线，允许但必须保持懒加载。）
 """
 
 import ast
@@ -18,9 +17,6 @@ DENYLIST = AGENT_ROOT / "oss_denylist.txt"
 
 # 主工程模块前缀
 FORBIDDEN_IMPORT_ROOTS = {"pipeline", "configs", "steps"}
-
-# 允许懒加载主工程的模块（仅 A1 臂）
-LAZY_IMPORT_ALLOWED = {"benchmark/arms.py"}
 
 # 不参与清单比对的内容（清单自身无法自我列举；生成物目录不纳入版本管理）
 IGNORED_DIRS = {"__pycache__", "output", ".pytest_cache", ".export_check"}
@@ -123,17 +119,3 @@ def test_public_python_does_not_import_main_project_at_top_level():
                 if r in FORBIDDEN_IMPORT_ROOTS:
                     violations.append(f"{rel} 顶层 import {r}")
     assert not violations, "; ".join(violations)
-
-
-@pytest.mark.parametrize("rel", sorted(LAZY_IMPORT_ALLOWED))
-def test_lazy_import_module_still_importable(rel):
-    """允许懒加载的模块，其顶层仍必须可独立导入。"""
-    src = (AGENT_ROOT / rel).read_text(encoding="utf-8")
-    tree = ast.parse(src)
-    for node in tree.body:
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            names = ([a.name for a in node.names] if isinstance(node, ast.Import)
-                     else [node.module or ""])
-            for n in names:
-                assert n.split(".")[0] not in FORBIDDEN_IMPORT_ROOTS, \
-                    f"{rel} 顶层不应 import {n}（应保持函数内懒加载）"

@@ -1,0 +1,39 @@
+{
+  "schema": "deprecated_arm_v1",
+  "arm": "A1",
+  "name": "现有规则增强基线",
+  "status": "removed",
+  "removed_at": "2026-11-19",
+  "last_recorded_lock": {
+    "lock_version": "1.0",
+    "input_sha256": "e6fc7190525233788aecf84e6208eff9fddef2c45ba0b7f73af6789fe52f1cdb",
+    "artifact_sha256": "a4bd1dc91d20b6444cb1acab6b5d2a297072ef142940f4b5bebb30e53ff8ea5f",
+    "config_sha256": "7d9c37ca786fb29ba318c08b582003323709f9687690e4620b33c0934a0a1362",
+    "prompt_version": null,
+    "code": {
+      "git_commit": "fde585bb0849b2b30b2e6bd603b51d5a8a665943",
+      "dirty": true
+    }
+  },
+  "definition": {
+    "method": "existing_augment",
+    "upstream_step": "05_augment",
+    "strategy": "single",
+    "min_steps": 1,
+    "max_steps": 1,
+    "target_roles": ["assistant"],
+    "only_loss_true": true,
+    "default_augmenters": ["insert_filler", "synonym_replace", "reorder"]
+  },
+  "reason": [
+    "任务不同源：上游增强做加噪（结巴/重复/ASR 错误），本 Agent 做语义检测与改写，比较的不是方法优劣而是任务定义",
+    "不可配对：A1 输出变体列表，n_out != n_in，无法按 dialogue_key 一一配对，胜率与 McNemar 不成立",
+    "不可复现：开源环境无 pipeline 包、产物未入库、旧指纹在 dirty 工作区生成",
+    "破坏单变量原则：A1 同时改变数据分布与任务类型"
+  ],
+  "superseded_by": {
+    "role": "robustness_noise_source",
+    "description": "同一 Agent 在 clean vs 05_augment 噪声输入上的配对比较，见 docs/notes/2026-11-19-效果验证与鲁棒性实验.md"
+  },
+  "note": "仅作历史凭据，不参与任何判等；当前 baseline_lock.json 只含 A0。"
+}

@@ -1,6 +1,6 @@
 """Benchmark harness（T1 基线冻结阶段）
 
-与主工程解耦：不 import pipeline_agent，仅在 A1 臂中复用既有 05_augment 步骤。
+与主工程解耦：不 import pipeline_agent，只处理 JSON 对话数据。
 """
 
 from .canonical import stable_dump, sha256_bytes, sha256_obj, sha256_file

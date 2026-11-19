@@ -19,6 +19,7 @@ benchmark/manifest.py
 benchmark/report.py
 benchmark/baseline/baseline_lock.json
 benchmark/baseline/lock_changelog.md
+benchmark/baseline/deprecated/a1_2026-11-19.json
 eval/__init__.py
 eval/entities.py
 eval/rules.py
@@ -93,6 +94,10 @@ docs/archive/v1.0-2026-11-12/旧文档索引.md
 docs/decisions/决策记录ADR.md
 docs/decisions/改造路线图.md
 docs/guides/部署与运行指南.md
+docs/notes/README.md
+docs/notes/2026-11-19-实验统计术语.md
+docs/notes/2026-11-19-A1臂移除记录.md
+docs/notes/2026-11-19-效果验证与鲁棒性实验.md
 
 # ---------- BUILD ----------
 # 内部发布工具与主工程胶水层：只在主工程环境使用，不随开源仓库分发

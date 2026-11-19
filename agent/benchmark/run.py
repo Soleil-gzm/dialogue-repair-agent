@@ -1,8 +1,11 @@
 """T1 基线冻结 CLI
 
 用法（在仓库根目录执行）：
-    python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0,A1
+    python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0
     python -m agent.benchmark.run --input ... --verify   # 只校验，不重写 lock
+
+本 CLI 只负责 A0（离线恒等臂）。A1 已于 2026-11-19 移出主消融链，
+A2/A3/A3L/A3R/A4 统一走 agent_eval.py。
 
 产出：
     {lock_dir}/baseline_lock.json   四元组指纹（只读，入库）
@@ -19,7 +22,7 @@ from pathlib import Path
 from agent.eval.judge import JUDGE_VERSION
 from agent.runtime.state import dialogue_key
 
-from .arms import run_a0, run_a1
+from .arms import run_a0
 from .fingerprint import (
     input_fingerprint,
     evaluator_fingerprint,
@@ -82,27 +85,14 @@ def _code_fingerprint() -> dict:
         return {"git_commit": None, "dirty": None}
 
 
-def _a1_config(seed: int, num_variants: int):
-    """A1 的配置快照（与 arms.run_a1 实际使用的一致），用于配置指纹。"""
-    from .arms import DEFAULT_A1_AUGMENTERS
-    return {
-        "strategy": "single", "min_steps": 1, "max_steps": 1,
-        "seed": seed, "num_variants": num_variants,
-        "target_roles": ["assistant"], "only_loss_true": True,
-        "augmenters": DEFAULT_A1_AUGMENTERS,
-    }
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.benchmark.run")
     ap.add_argument("--input", required=True, help="输入对话 JSON/JSONL")
-    ap.add_argument("--arms", default="A0",
-                    help="默认只跑 A0（可独立运行）；A1 需主工程环境，须显式指定")
+    ap.add_argument("--arms", default="A0", help="本 CLI 只支持 A0")
     ap.add_argument("--out", default="agent/benchmark/output")
     ap.add_argument("--lock-dir", default="agent/benchmark/baseline",
                     help="基线目录（入库）；--out 为运行产物（不入库）")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--num-variants", type=int, default=1)
     ap.add_argument("--profile", default="standard")
     ap.add_argument("--verify", action="store_true", help="只校验已有 lock（要求臂集合完全一致）")
     ap.add_argument("--verify-arm", default=None,
@@ -121,21 +111,21 @@ def main(argv=None) -> int:
     dialogues = _load(in_path)
     arms_wanted = [a.strip().upper() for a in args.arms.split(",") if a.strip()]
 
-    results = {}
-    if "A0" in arms_wanted:
-        results["A0"] = run_a0(dialogues)
-    if "A1" in arms_wanted:
-        work = Path(args.out) / "work" / "A1"
-        results["A1"] = run_a1(
-            dialogues, work, seed=args.seed, num_variants=args.num_variants
+    unsupported = [a for a in arms_wanted if a != "A0"]
+    if unsupported:
+        print(
+            f"[ERROR] run.py 只支持 A0；其他臂请使用 agent_eval.py: {unsupported}",
+            file=sys.stderr,
         )
+        return 2
+
+    results = {"A0": run_a0(dialogues)}
 
     arm_fps = {}
     for name, r in results.items():
-        cfg = {"method": r.arm} if name == "A0" else _a1_config(args.seed, args.num_variants)
         from .fingerprint import config_fingerprint
         arm_fps[name] = {
-            "config_sha256": config_fingerprint(cfg),
+            "config_sha256": config_fingerprint({"method": r.arm}),
             "prompt_version": None,
             # 产物指纹：同输入同配置必然复现，可在无 LLM 环境中自证基线未漂移
             "artifact_sha256": r.artifact_sha256,
