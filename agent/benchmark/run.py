@@ -19,7 +19,8 @@ import os
 import sys
 from pathlib import Path
 
-from agent.eval.judge import JUDGE_VERSION
+from agent.eval.judge import JUDGE_VERSION, RUBRIC_VERSION
+from agent.eval.rules import RULES_VERSION
 from agent.runtime.state import dialogue_key
 
 from .arms import run_a0
@@ -34,10 +35,10 @@ from .manifest import build_manifest, write_manifest
 
 
 DEFAULT_EVALUATOR = dict(
-    rules_version="1.0.0",
+    rules_version=RULES_VERSION,
     judge_prompt_version=JUDGE_VERSION,
-    judge_model="deepseek-chat",
-    rubric_version="1.0",
+    judge_model="none",  # A0 是离线恒等臂，不调任何 LLM
+    rubric_version=RUBRIC_VERSION,
     judge_temperature=0.0,
 )
 

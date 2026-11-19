@@ -85,9 +85,14 @@ class TestR3EntityFidelity:
 
 class TestR4SpeakerSet:
     def test_speaker_distribution_change(self, mini_dialogues):
+        """role 变化由 R2 捕获；R4 只在 R2 无 role 违规时才触发（消除冗余）。"""
         d = copy.deepcopy(mini_dialogues[0])
         d["messages"][1]["role"] = "assistant"
-        assert R4_SPEAKER_SET in _rules(check_consistency(mini_dialogues[0], d))
+        rules = _rules(check_consistency(mini_dialogues[0], d))
+        # R2 捕获逐位置 role 变化
+        assert R2_STRUCTURE_INVARIANT in rules
+        # R4 不应触发：逐位置 role 变化必然导致 Counter 不同，R2 已覆盖
+        assert R4_SPEAKER_SET not in rules
 
 
 class TestRobustness:

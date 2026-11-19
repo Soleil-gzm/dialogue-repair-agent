@@ -8,6 +8,8 @@
 3. 每一步都写 Trace，包括被拒的决策与异常
 """
 
+import copy
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
@@ -54,7 +56,6 @@ class AgentResult:
 def _args_fingerprint(tool: str, args: Dict[str, Any]) -> str:
     """参数指纹：用于识别"同一决策反复出现"。"""
     payload = json.dumps({"tool": tool, "args": args}, ensure_ascii=False, sort_keys=True)
-    import hashlib
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -83,8 +84,6 @@ class AgentRuntime:
             reference: 原始参照（校验基准与回退目标）。缺省时以 dialogue 自身为基准，
                        此时一致性校验必然通过，只用于跑通链路。
         """
-        import copy
-
         state = AgentState(
             dialogue=copy.deepcopy(dialogue),
             original=copy.deepcopy(reference if reference is not None else dialogue),
@@ -114,6 +113,10 @@ class AgentRuntime:
                 termination, reason = TERM_ERROR, f"策略异常: {e}"
                 self.trace.write({"event": "policy_error", "error": str(e), "key": state.key})
                 break
+            finally:
+                # decide 内部可能调了 client.chat（如 LLMPolicy）并 add_tokens；
+                # 无论 decide 成功还是抛异常，pending tokens 都要入账，否则 AgentResult.tokens 漏计
+                state.budget.consume(tokens=state.drain_tokens())
 
             self.trace.write({
                 "event": "decide",
@@ -122,9 +125,6 @@ class AgentRuntime:
                 "tool": decision.tool,
                 "reason": decision.reason,
             })
-
-            # 策略自身的模型调用也要占预算，否则"token 上限"形同虚设
-            state.budget.consume(tokens=state.drain_tokens())
 
             if decision.action == ACTION_STOP:
                 termination, reason = TERM_STOP, decision.reason

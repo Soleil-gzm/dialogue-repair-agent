@@ -9,6 +9,7 @@ from typing import Dict, List
 
 from .entities import extract_entities_from_messages, system_text
 
+RULES_VERSION = "1.0.0"  # 纯规则校验的版本；只在规则语义变更时升级
 R1_SYSTEM_IMMUTABLE = "R1_system_immutable"
 R2_STRUCTURE_INVARIANT = "R2_structure_invariant"
 R3_ENTITY_FIDELITY = "R3_entity_fidelity"
@@ -37,11 +38,13 @@ def check_consistency(before: dict, after: dict) -> List[Dict]:
         ))
 
     # ---------------- R2：结构不变 ----------------
+    role_changed = False
     if len(b_msgs) != len(a_msgs):
         violations.append(_violation(
             R2_STRUCTURE_INVARIANT,
             f"消息数变化: {len(b_msgs)} -> {len(a_msgs)}",
         ))
+        role_changed = True
     for i in range(min(len(b_msgs), len(a_msgs))):
         b, a = b_msgs[i], a_msgs[i]
         if b.get("role") != a.get("role"):
@@ -49,6 +52,7 @@ def check_consistency(before: dict, after: dict) -> List[Dict]:
                 R2_STRUCTURE_INVARIANT,
                 f"role 变化: {b.get('role')!r} -> {a.get('role')!r}", turn=i,
             ))
+            role_changed = True
         # loss 三态严格比对：缺失 != "False"
         if b.get("loss") != a.get("loss"):
             violations.append(_violation(
@@ -57,13 +61,16 @@ def check_consistency(before: dict, after: dict) -> List[Dict]:
             ))
 
     # ---------------- R4：说话人集合 ----------------
-    b_roles = Counter(m.get("role") for m in b_msgs)
-    a_roles = Counter(m.get("role") for m in a_msgs)
-    if b_roles != a_roles:
-        violations.append(_violation(
-            R4_SPEAKER_SET,
-            f"说话人分布变化: {dict(b_roles)} -> {dict(a_roles)}",
-        ))
+    # 只在 R2 没有 role 变化时才检查 Counter：逐位置 role 相同
+    # 必然导致 Counter 相同，此时 Counter 比较是冗余噪声
+    if not role_changed:
+        b_roles = Counter(m.get("role") for m in b_msgs)
+        a_roles = Counter(m.get("role") for m in a_msgs)
+        if b_roles != a_roles:
+            violations.append(_violation(
+                R4_SPEAKER_SET,
+                f"说话人分布变化: {dict(b_roles)} -> {dict(a_roles)}",
+            ))
 
     # ---------------- R3：实体完全保真 ----------------
     b_ents = set(extract_entities_from_messages(before or {}))

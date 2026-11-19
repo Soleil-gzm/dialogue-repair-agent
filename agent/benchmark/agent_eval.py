@@ -28,8 +28,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..eval.judge import JUDGE_VERSION, LLMJudge
+from ..eval.judge import JUDGE_VERSION, RUBRIC_VERSION, LLMJudge
+from ..eval.rules import RULES_VERSION
 from ..runtime.budget import Budget
+from ..runtime.config import judge_settings
 from ..runtime.policy import LLMPolicy, RulePolicy
 from ..runtime.registry import ToolRegistry
 from ..tools import register_all
@@ -243,7 +245,7 @@ def main(argv=None) -> int:
             print(f"[ERROR] 臂 {args.arm} 需要 --live（会消耗 token）", file=sys.stderr)
             return 2
         from ..runtime.config import LLMSettings, load_dotenv
-        from ..runtime.deepseek import DeepSeekClient, build_stage_clients
+        from ..runtime.deepseek import build_stage_clients
         from ..runtime.ledger import TokenLedger
 
         load_dotenv(root / ".env")
@@ -252,10 +254,13 @@ def main(argv=None) -> int:
             print("[ERROR] 未找到 DEEPSEEK_API_KEY", file=sys.stderr)
             return 2
         ledger = TokenLedger(root / "logs" / "agent" / f"ledger_{args.arm}.jsonl")
-        # A3R 是 stage 路由工厂的第一个消费者：重写走 generate 侧
-        client = (build_stage_clients(ledger=ledger) if args.arm == A3R
-                  else DeepSeekClient(settings=settings, ledger=ledger))
+        # 所有在线臂统一走 StageRoutedClient：
+        # - A3R rewrite 走 generate 侧（stage != "judge"）
+        # - A4 的 LLMJudge 以 stage="judge" 调用 → 路由到 JUDGE_MODEL 配置
+        # - A3L 只有决策调用 → 走 generate 侧
+        client = build_stage_clients(ledger=ledger)
         model_name = settings.model
+        judge_model_name = judge_settings().model
 
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
                      run_id=f"ablation_{args.arm}")
@@ -270,10 +275,10 @@ def main(argv=None) -> int:
             "defects": input_fingerprint(pub / "defects_v1.jsonl", root=root),
         },
         "evaluator": evaluator_fingerprint(
-            rules_version="1.0.0",
+            rules_version=RULES_VERSION,
             judge_prompt_version=JUDGE_VERSION,
-            judge_model=model_name or "none",
-            rubric_version="1.0",
+            judge_model=judge_model_name if args.arm == A4 else "none",
+            rubric_version=RUBRIC_VERSION,
             judge_temperature=0.0,
         ),
     }
@@ -287,7 +292,8 @@ def main(argv=None) -> int:
                 root=root,
                 profile="ablation",
                 arms=[args.arm],
-                models={"generate": model_name, "judge": model_name if args.arm == A4 else None},
+                models={"generate": model_name,
+                        "judge": judge_model_name if args.arm == A4 else None},
                 extra={"limit": args.limit, "n_defects": len(defects), "n_base": len(base)},
             ),
             out.parent / f"manifest_{args.arm}.json",

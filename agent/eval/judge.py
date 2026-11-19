@@ -23,6 +23,7 @@ from agent.runtime.state import dialogue_key as _dialogue_key
 from .coherence import C3_OFF_TOPIC
 
 JUDGE_VERSION = "coherence-judge-v1"
+RUBRIC_VERSION = "1.0"  # 判官 rubric / prompt 本身没有独立版本，先与 JUDGE_VERSION 对齐
 
 # 单条消息渲染上限：判官只需判断意图是否对上，不需要读完整长文
 MAX_CONTENT_CHARS = 600
@@ -137,6 +138,6 @@ class LLMJudge:
 
 
 __all__ = [
-    "JUDGE_VERSION", "JudgeError", "LLMJudge",
+    "JUDGE_VERSION", "RUBRIC_VERSION", "JudgeError", "LLMJudge",
     "parse_verdict", "render_dialogue",
 ]

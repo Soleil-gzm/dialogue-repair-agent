@@ -11,7 +11,7 @@ import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Union
 
 _ENV_LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 
@@ -81,11 +81,44 @@ class LLMSettings:
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "LLMSettings":
         env = os.environ if environ is None else environ
         base = cls()
-        return replace(
-            base,
-            model=env.get("DEEPSEEK_MODEL") or base.model,
-            base_url=env.get("DEEPSEEK_BASE_URL") or base.base_url,
-        )
+        kwargs: Dict[str, Any] = {}
+        kwargs["model"] = env.get("DEEPSEEK_MODEL") or base.model
+        kwargs["base_url"] = env.get("DEEPSEEK_BASE_URL") or base.base_url
+
+        if raw := env.get("DEEPSEEK_TEMPERATURE"):
+            try:
+                kwargs["temperature"] = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"DEEPSEEK_TEMPERATURE={raw!r} 不是合法浮点数"
+                )
+        if raw := env.get("DEEPSEEK_MAX_TOKENS"):
+            try:
+                kwargs["max_tokens"] = int(raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"DEEPSEEK_MAX_TOKENS={raw!r} 不是合法整数"
+                )
+        if raw := env.get("DEEPSEEK_TIMEOUT"):
+            try:
+                kwargs["timeout_s"] = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"DEEPSEEK_TIMEOUT={raw!r} 不是合法浮点数"
+                )
+        if raw := env.get("DEEPSEEK_JSON_MODE"):
+            low = raw.strip().lower()
+            if low in ("true", "1", "yes", "on"):
+                kwargs["json_mode"] = True
+            elif low in ("false", "0", "no", "off"):
+                kwargs["json_mode"] = False
+            else:
+                raise ValueError(
+                    f"DEEPSEEK_JSON_MODE={raw!r} 无法解析为布尔值"
+                    "（合法值：true/false/1/0/yes/no/on/off）"
+                )
+
+        return replace(base, **kwargs)
 
     def api_key(self, environ: Optional[Mapping[str, str]] = None) -> str:
         env = os.environ if environ is None else environ

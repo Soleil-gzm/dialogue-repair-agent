@@ -7,11 +7,12 @@
 """
 
 import argparse
-import hashlib
 import json
 import random
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+from ..runtime.state import dialogue_key
 
 SCENARIOS = ["S1_咨询", "S2_催办", "S3_退换", "S4_投诉", "S5_回访"]
 PRODUCTS = ["示例产品甲", "示例产品乙", "示例产品丙"]
@@ -86,12 +87,6 @@ TEST_N = 50
 # 轮次桶：短 / 中 / 长。分层时按桶计数，避免某一长度被切分偏置
 TURN_BUCKETS = ((3, 4), (5, 6), (7, 7))
 SCENE_MARKER = "## 场景标签"
-
-
-def dialogue_key(dialogue: dict) -> str:
-    """内容哈希前 16 位，与 runtime.state.dialogue_key 同构。"""
-    payload = json.dumps(dialogue, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _scene_of(dialogue: dict) -> str:
