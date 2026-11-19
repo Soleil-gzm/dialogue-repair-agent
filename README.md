@@ -61,15 +61,18 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 | 臂 | 处理 | 回答的问题 | 状态 |
 |---|---|---|---|
 | **A0** | 不处理 | 下界；任何方法比它差都是失败 | ✅ |
-| **A1** | 现有规则增强 | 相对现有能力有无增量 | ⬜ 需主工程上游步骤 |
+| ~~A1~~ | 上游规则增强（加噪） | 已移出主链，仅作鲁棒性噪声源 | ⛔ 2026-11-19 移除 |
 | **A2** | 单次 LLM 重写 | "LLM 重写"本身值不值 | ⬜ 未实现（S1b） |
 | **A3** | Agent 工具循环 + 规则决策 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
 | **A3L** | A3 的工具集 + LLM 决策 | 只换决策者是否值得 | ✅ |
 | **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 已实现，待 L3 复测 |
 | **A4** | A3L + 语义判官 | 判官是否值得 | ✅ 需在线密钥 |
 
-> A1 复用上游数据工程的增强步骤，因此不在本仓库可运行范围内；
-> 它的指纹仍完整记录在 lock 里，作为"测过什么"的凭据。
+> **A1 已移除**：它做的是上游 `05_augment` 加噪（语气词/同义替换/语序），与"语义检测 + 改写"不是同一个任务；
+> 产物是变体列表，`n_out ≠ n_in` 无法配对，且脱离上游环境不可复现。旧指纹归档在
+> `agent/benchmark/baseline/deprecated/a1_2026-11-19.json`，原因见
+> [A1 臂移除记录](agent/docs/notes/2026-11-19-A1臂移除记录.md)。
+> 加噪能力转为鲁棒性实验的噪声源（同一 Agent 跑 clean vs noisy），不浪费。
 > A2 尚未实现，所以"A3 vs A2"的主结论仍需等 Sprint 1b。
 
 ---
@@ -114,10 +117,10 @@ agent/
 │   ├── fingerprint.py    四元组指纹
 │   ├── lock.py           不可变 lock + 校验
 │   ├── manifest.py       运行清单（环境 / 命令 / 产物哈希，不参与判等）
-│   ├── arms.py           A0 恒等臂 / A1 上游增强臂
+│   ├── arms.py           A0 恒等臂
 │   ├── fixtures.py       中立域程序化数据生成 + dev/test 分层切分
 │   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
-│   ├── run.py            基线 CLI（A0/A1 与 lock 校验）
+│   ├── run.py            基线 CLI（A0 与 lock 校验）
 │   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A3R/A4：召回 / 误报 / 成本）
 │   ├── report.py         作品集报告生成（三件套 + SVG，纯标准库）
 │   ├── baseline/         入库：冻结的基线
@@ -148,6 +151,7 @@ agent/
 │   ├── architecture/     架构设计 / 模块与接口 / Benchmark 评测设计
 │   ├── decisions/        ADR / 改造路线图
 │   ├── guides/           部署与运行指南
+│   ├── notes/            过程笔记（术语 / 决策 / 实验复盘）
 │   └── archive/          历史版本与版本追溯
 ├── tests/                测试，含开源边界自证
 ├── oss_manifest.txt      发布清单（PUBLIC / BUILD / PRIVATE）
@@ -249,6 +253,7 @@ python -m agent.benchmark.agent_eval --arm A4  --live
 | [Benchmark 评测设计](agent/docs/architecture/Benchmark评测设计.md) | 基线指纹、指标口径、统计与报告规格 |
 | [决策记录 ADR](agent/docs/decisions/决策记录ADR.md) | 关键取舍与边界 |
 | [改造路线图](agent/docs/decisions/改造路线图.md) | Sprint 排序与状态 |
+| [项目笔记](agent/docs/notes/README.md) | 统计术语、A1 移除记录、效果验证与鲁棒性实验 |
 | [部署与运行指南](agent/docs/guides/部署与运行指南.md) | 安装、数据生成、离线复现、在线评测、排障 |
 
 ---
