@@ -121,3 +121,4 @@ docs/archive/private/Agent化改造总纲与Benchmark方案.md
 docs/archive/private/Agent化技术评估与落地方案.md
 docs/archive/private/数据策略评估与决策.md
 docs/archive/private/数据格式适配与兼容规范.md
+benchmark/l3_stats.py
