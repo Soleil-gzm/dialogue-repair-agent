@@ -482,6 +482,15 @@ def _collect_outcomes_a2(
     return outcomes
 
 
+def _load_public(root: Path):
+    """加载公开轨 fixture：干净对话列表 + 缺陷记录列表。"""
+    pub = root / "agent" / "fixtures" / "public"
+    base = json.loads((pub / "base_v1.json").read_text(encoding="utf-8"))
+    lines = (pub / "defects_v1.jsonl").read_text(encoding="utf-8").strip().split("\n")
+    defects = [json.loads(line) for line in lines if line.strip()]
+    return base, defects
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.benchmark.agent_eval")
     ap.add_argument("--arm", choices=list(ARMS), help="单臂评测")
