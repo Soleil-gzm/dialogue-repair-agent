@@ -149,8 +149,18 @@ class LLMSettings:
 
 
 def judge_settings(environ: Optional[Mapping[str, str]] = None) -> LLMSettings:
-    """判官侧配置：JUDGE_MODEL 覆盖模型，判官必须确定性（温度 0）。"""
+    """判官侧配置：JUDGE_MODEL / JUDGE_BASE_URL 可独立覆盖生成侧。
+
+    所有 JUDGE_* 环境变量留空表示"沿用 DEEPSEEK_* 对应值"。
+    判官必须确定性，强制 temperature=0.0。
+    """
     env = os.environ if environ is None else environ
     base = LLMSettings.from_env(env)
-    model = (env.get("JUDGE_MODEL") or "").strip()
-    return replace(base, model=model or base.model, temperature=0.0)
+
+    kwargs: Dict[str, Any] = {"temperature": 0.0}
+    if m := env.get("JUDGE_MODEL", "").strip():
+        kwargs["model"] = m
+    if u := env.get("JUDGE_BASE_URL", "").strip():
+        kwargs["base_url"] = u
+
+    return replace(base, **kwargs)
