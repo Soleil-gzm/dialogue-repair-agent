@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-ARM_ORDER = ["A3", "A3R", "A3L", "A4"]
+ARM_ORDER = ["A3", "A3R", "A3L", "A4", "A4R"]
 
 DEFECT_LABELS = {
     "D1_off_topic": "D1 答非所问",
@@ -25,7 +25,8 @@ DEFECT_LABELS = {
     "D6_missing_response": "D6 缺失承接",
 }
 
-COLORS = {"A3": "#4c6ef5", "A3R": "#7048e8", "A3L": "#f59f00", "A4": "#12b886"}
+COLORS = {"A3": "#4c6ef5", "A3R": "#7048e8", "A3L": "#f59f00", "A4": "#12b886",
+          "A4R": "#e8590c"}
 
 
 # --------------------------------------------------------------------------

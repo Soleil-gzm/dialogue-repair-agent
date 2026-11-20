@@ -8,7 +8,7 @@ import json
 import pytest
 
 from agent.benchmark.agent_eval import (
-    A3, A3L, A3R, A4, ArmResult, _parse_a2_output, build_runtime, run_arm,
+    A3, A3L, A3R, A4, A4R, ArmResult, _parse_a2_output, build_runtime, run_arm,
 )
 from agent.benchmark.defects import generate
 from agent.runtime.llm import FakeLLMClient, LLMResponse
@@ -53,6 +53,16 @@ class TestBuildRuntime:
             build_runtime(A3R)
         with pytest.raises(ValueError):
             build_runtime(A4)
+        with pytest.raises(ValueError):
+            build_runtime(A4R)
+
+    def test_a4r_uses_rewrite_aware_policy(self):
+        """A4R = A4 + rewrite_segment：决策器要允许改写，工具表里要有改写工具。"""
+        from agent.runtime.registry import ToolRegistry
+
+        runtime = build_runtime(A4R, client=FakeLLMClient())
+        assert runtime.policy.allow_rewrite is True
+        assert "rewrite_segment" in ToolRegistry.list_tools()
 
     def test_unknown_arm(self):
         with pytest.raises(ValueError):

@@ -5,7 +5,7 @@
     python -m agent.benchmark.run --input ... --verify   # 只校验，不重写 lock
 
 本 CLI 只负责 A0（离线恒等臂）。A1 已于 2026-11-19 移出主消融链，
-A2/A3/A3L/A3R/A4 统一走 agent_eval.py。
+A2/A3/A3L/A3R/A4/A4R 统一走 agent_eval.py。
 
 产出：
     {lock_dir}/baseline_lock.json   四元组指纹（只读，入库）

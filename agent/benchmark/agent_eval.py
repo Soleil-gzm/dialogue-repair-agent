@@ -1,8 +1,8 @@
-"""Agent 臂评测（A2 / A3 / A3L / A3R / A4）
+"""Agent 臂评测（A2 / A3 / A3L / A3R / A4 / A4R）
 
 在同一缺陷集上跑**完整决策循环**，产出每类缺陷的检出率、阻断率、干净样本干预率与成本。
 
-五个臂，按单变量原则逐层加因子：
+六个臂，按单变量原则逐层加因子：
 
 | 臂 | 决策策略 | 工具 | 回答的问题 |
 |---|---|---|---|
@@ -11,6 +11,7 @@
 | `A3L`  | LLM function calling | 确定性校验（无判官） | 仅换决策者，值不值 |
 | `A3R`  | 规则（多轮修复） | 确定性校验 + rewrite_segment | 给规则策略补上修复工具后能走多远 |
 | `A4`   | LLM function calling | 确定性校验 + 语义判官 | 语义能力带来的增量 |
+| `A4R`  | LLM function calling | 确定性校验 + 语义判官 + rewrite_segment | LLM 决策拿到完整工具集后的上限 |
 
 口径：
 - **detected** = 循环期间曾经记录到违规（说明看见问题了，修复成功也算）
@@ -47,7 +48,8 @@ A3 = "A3"
 A3L = "A3L"
 A3R = "A3R"
 A4 = "A4"
-ARMS = (A2, A3, A3L, A3R, A4)
+A4R = "A4R"
+ARMS = (A2, A3, A3L, A3R, A4, A4R)
 
 ARM_DESCRIPTIONS = {
     A2: "单次 LLM 重写，无工具/校验/回退",
@@ -55,6 +57,7 @@ ARM_DESCRIPTIONS = {
     A3L: "LLM 决策 + 确定性工具",
     A3R: "规则多轮策略 + 确定性工具 + rewrite_segment",
     A4: "LLM 决策 + 确定性工具 + 语义判官",
+    A4R: "LLM 决策 + 确定性工具 + 语义判官 + rewrite_segment",
 }
 
 # A2 单次重写 prompt：给模型一段对话，让它修正 assistant 回复的答非所问问题
@@ -172,8 +175,23 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
 
     if arm == A3L:
         register_all()
-    else:
-        register_all(judge=judge or LLMJudge(client=client, run_id=run_id))
+        return _runtime(LLMPolicy(client, run_id=run_id), trace=trace)
+
+    # A4 / A4R 都带语义判官
+    register_all(judge=judge or LLMJudge(client=client, run_id=run_id))
+    if arm == A4R:
+        ToolRegistry.register(make_rewrite_segment(client, run_id=run_id))
+        # 两次改写 + 每轮复检，工具调用数会明显高于 A4，预算同步放宽
+        return _runtime(
+            LLMPolicy(client, run_id=run_id, allow_rewrite=True),
+            budget=Budget(
+                max_iterations=20,
+                max_tool_calls=24,
+                max_tokens=20000,
+                max_wall_clock_s=300.0,
+            ),
+            trace=trace,
+        )
 
     return _runtime(LLMPolicy(client, run_id=run_id), trace=trace)
 
@@ -680,7 +698,7 @@ def main(argv=None) -> int:
         "evaluator": evaluator_fingerprint(
             rules_version=RULES_VERSION,
             judge_prompt_version=JUDGE_VERSION,
-            judge_model=judge_model_name if args.arm == A4 else "none",
+            judge_model=judge_model_name if args.arm in (A4, A4R) else "none",
             rubric_version=RUBRIC_VERSION,
             judge_temperature=0.0,
         ),
@@ -696,7 +714,7 @@ def main(argv=None) -> int:
                 profile="ablation",
                 arms=[args.arm],
                 models={"generate": model_name,
-                        "judge": judge_model_name if args.arm == A4 else None},
+                        "judge": judge_model_name if args.arm in (A4, A4R) else None},
                 extra={"limit": args.limit, "n_defects": len(defects), "n_base": len(base)},
             ),
             out.parent / f"manifest_{args.arm}.json",
