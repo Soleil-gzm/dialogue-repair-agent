@@ -579,6 +579,9 @@ def main(argv=None) -> int:
         model_name = settings.model
         judge_model_name = judge_settings().model
 
+    # 每次运行的账本标识必须唯一，否则多次尝试会混进同一 run_id
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+
     if args.compare:
         arm_a, arm_b = [s.strip() for s in args.compare.split(",")]
         for arm in (arm_a, arm_b):
@@ -586,7 +589,7 @@ def main(argv=None) -> int:
                 print(f"[ERROR] 未知臂: {arm}", file=sys.stderr)
                 return 2
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
-                               run_id=f"compare_{arm_a}_vs_{arm_b}",
+                               run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
                                ledger=ledger, metric=args.metric)
         if ledger:
             ledger.close()
@@ -605,7 +608,7 @@ def main(argv=None) -> int:
 
     # 单臂评测路径
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
-                     run_id=f"ablation_{args.arm}")
+                     run_id=f"ablation_{args.arm}_{stamp}")
     if ledger:
         ledger.close()
 
