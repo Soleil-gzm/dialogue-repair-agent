@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from agent.benchmark.report import (
     ablation_svg, heatmap_svg, load_arms, load_trace, render_html,
     render_markdown, summarize, trace_svg,
@@ -21,7 +23,7 @@ def _arm(name, blocked=20, total=20, cost=0.0, tokens=0, clean=12, flagged=0, st
         "macro_recall_blocked": round(
             sum(r["blocked"] / r["total"] for r in per.values()) / len(per), 4),
         "clean_total": clean, "clean_flagged": flagged,
-        "clean_failed": 0,
+        "clean_failed": 0, "clean_stopped": 0,
         "clean_intervention_rate": round(flagged / clean, 4) if clean else 0.0,
         "failed": 0, "stopped": stopped,
         "tokens": tokens, "calls": 0, "cost_cny": cost, "elapsed_s": 0.0,
@@ -69,6 +71,41 @@ class TestSummarize:
         report = summarize([], [])
         assert report["arms"] == []
         assert report["meta"]["defect_types"] == []
+
+
+class TestDatasetMeta:
+    """报告元数据必须从实际计数派生，不能写死 20×6。"""
+
+    def test_dataset_size_is_derived_from_counts(self):
+        arms = [_arm("A3", total=2, blocked=2), _arm("A4", total=2, blocked=1)]
+        report = summarize(arms, [])
+        assert report["meta"]["dataset"] == {
+            "n_defects": 12, "per_type": 2, "n_clean": 12,
+            "limit": 0, "debug": False,
+        }
+
+    def test_limit_manifest_marks_run_as_debug(self):
+        report = summarize(_arms(), [], [{"extra": {"limit": 1}}])
+        assert report["meta"]["dataset"]["debug"] is True
+        assert report["meta"]["dataset"]["limit"] == 1
+        md = render_markdown(report)
+        assert "调试抽样" in md and "--limit 1" in md
+
+    def test_inconsistent_arm_counts_are_rejected(self):
+        with pytest.raises(ValueError, match="样本数不一致"):
+            summarize([_arm("A3", total=2), _arm("A4", total=1)], [])
+
+    def test_inconsistent_fingerprints_are_rejected(self):
+        a, b = _arm("A3"), _arm("A4")
+        a["fingerprint"] = {"evaluator": {"rules": "v1"}}
+        b["fingerprint"] = {"evaluator": {"rules": "v2"}}
+        with pytest.raises(ValueError, match="指纹不一致"):
+            summarize([a, b], [])
+
+    def test_limitations_are_rendered(self):
+        report = summarize(_arms(), [])
+        assert report["meta"]["limitations"]
+        assert "## 局限" in render_markdown(report)
 
 
 class TestFigures:

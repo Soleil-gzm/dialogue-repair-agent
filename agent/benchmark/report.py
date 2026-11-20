@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-ARM_ORDER = ["A3", "A3R", "A3L", "A4", "A4R"]
+ARM_ORDER = ["A2", "A3", "A3L", "A3R", "A4", "A4R"]
 
 DEFECT_LABELS = {
     "D1_off_topic": "D1 答非所问",
@@ -25,8 +25,8 @@ DEFECT_LABELS = {
     "D6_missing_response": "D6 缺失承接",
 }
 
-COLORS = {"A3": "#4c6ef5", "A3R": "#7048e8", "A3L": "#f59f00", "A4": "#12b886",
-          "A4R": "#e8590c"}
+COLORS = {"A2": "#adb5bd", "A3": "#4c6ef5", "A3R": "#7048e8", "A3L": "#f59f00",
+          "A4": "#12b886", "A4R": "#e8590c"}
 
 
 # --------------------------------------------------------------------------
@@ -56,13 +56,75 @@ def _rate(row: Dict[str, Any], key: str = "blocked") -> float:
     return (row.get(key, 0) / total) if total else 0.0
 
 
-def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]]) -> Dict[str, Any]:
+def dataset_meta(arms: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """从各臂的实际计数派生数据集规模，拒绝把 --limit 调试运行写成全量。"""
+    totals: Dict[str, set] = {}
+    for arm in arms:
+        for t, row in (arm.get("per_type") or {}).items():
+            totals.setdefault(t, set()).add(int(row.get("total", 0)))
+
+    for t, values in totals.items():
+        if len(values) > 1:
+            raise ValueError(f"各臂在 {t} 上的样本数不一致: {sorted(values)}")
+
+    counts = [next(iter(v)) for v in totals.values()]
+    if not counts:
+        return {"n_defects": 0, "per_type": 0, "n_clean": 0}
+    if len(set(counts)) > 1:
+        detail = {t: next(iter(v)) for t, v in totals.items()}
+        raise ValueError(f"各类缺陷样本数不一致: {detail}")
+
+    clean = {int(a.get("clean_total", 0)) for a in arms}
+    if len(clean) > 1:
+        raise ValueError(f"各臂干净样本数不一致: {sorted(clean)}")
+
+    return {
+        "n_defects": sum(counts),
+        "per_type": counts[0],
+        "n_clean": clean.pop(),
+    }
+
+
+def validate_fingerprints(arms: List[Dict[str, Any]]) -> None:
+    """合并多臂前校验指纹；不同 RULES/JUDGE 版本的结果不得静默混算。"""
+    seen: Dict[str, str] = {}
+    for arm in arms:
+        fp = arm.get("fingerprint")
+        if fp:
+            seen[arm["arm"]] = json.dumps(fp, ensure_ascii=False, sort_keys=True)
+    if len(set(seen.values())) > 1:
+        raise ValueError("结果指纹不一致，不能合并: " + ", ".join(sorted(seen)))
+
+
+def load_manifests(paths: Sequence[Path]) -> List[Dict[str, Any]]:
+    out = []
+    for p in paths:
+        try:
+            out.append(json.loads(Path(p).read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]],
+              manifests: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
     defect_types = []
     for arm in arms:
         for t in (arm.get("per_type") or {}):
             if t not in defect_types:
                 defect_types.append(t)
     defect_types.sort()
+
+    validate_fingerprints(arms)
+    dataset = dataset_meta(arms)
+
+    limit = 0
+    for m in manifests or []:
+        extra = m.get("extra") or {}
+        if extra.get("limit"):
+            limit = max(limit, int(extra["limit"]))
+    dataset["limit"] = limit
+    dataset["debug"] = bool(limit)
 
     recall: Dict[str, Dict[str, float]] = {}
     for arm in arms:
@@ -74,16 +136,38 @@ def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]]) -> Dict[s
     return {
         "meta": {
             "title": "对话数据修复 Agent：可复现评测",
-            "dataset": {"n_defects": 20 * len(defect_types), "per_type": 20,
-                        "n_clean": (arms[0].get("clean_total", 0) if arms else 0)},
+            "dataset": dataset,
             "defect_types": defect_types,
             "defect_labels": {t: DEFECT_LABELS.get(t, t) for t in defect_types},
             "trace_events": len(trace),
+            "limitations": _limitations(arms, dataset),
         },
         "arms": arms,
         "recall": recall,
         "conclusions": _conclusions(arms, recall, defect_types),
     }
+
+
+def _limitations(arms: List[Dict[str, Any]], dataset: Dict[str, Any]) -> List[str]:
+    out = [
+        "自动指标只能证明最终输出通过规则/判官校验，不能证明语义正确；"
+        "repaired 样本必须人工抽检后才可引用。",
+        "blocked 对 A2 恒为 0：A2 没有回退能力，这是能力差异，不是漏检。",
+        "本报告不包含 McNemar 显著性检验；跨臂显著性见 --compare 产物。",
+    ]
+    if dataset.get("debug"):
+        out.insert(
+            0,
+            f"本次运行使用 --limit {dataset.get('limit')} 调试抽样："
+            f"每类仅 {dataset.get('per_type')} 条（共 {dataset.get('n_defects')} 条），"
+            "不得作为完整数据集结论。",
+        )
+    for arm in arms:
+        if arm.get("judge_error"):
+            out.append(
+                f"{arm['arm']} 有 {arm['judge_error']} 条样本因判官故障被排除出"
+                "检出/阻断统计；故障率超过 5% 时该臂结果不可采信。")
+    return out
 
 
 def _conclusions(arms: List[Dict[str, Any]], recall: Dict[str, Dict[str, float]],
@@ -117,13 +201,20 @@ def _conclusions(arms: List[Dict[str, Any]], recall: Dict[str, Dict[str, float]]
 
     for arm in arms:
         if arm.get("clean_total"):
+            intervened = (arm.get("clean_flagged", 0) + arm.get("clean_failed", 0)
+                          + arm.get("clean_stopped", 0))
             out.append(
-                f"{arm['arm']} 干净样本干预 {arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}"
-                f"/{arm['clean_total']}（{arm.get('clean_intervention_rate', 0):.1%}）。")
+                f"{arm['arm']} 干净样本干预 {intervened}/{arm['clean_total']}"
+                f"（{arm.get('clean_intervention_rate', 0):.1%}）。")
         if arm.get("stopped"):
             out.append(
                 f"{arm['arm']} 有 {arm['stopped']} 条样本因预算/墙钟中止，"
                 "已与「未检出」分开计数（环境噪声不计入模型能力）。")
+        if arm.get("judge_error"):
+            verdict = "可采信" if arm.get("valid", True) else "不可采信"
+            out.append(
+                f"{arm['arm']} 有 {arm['judge_error']} 条判官故障样本，"
+                f"故障率 {arm.get('judge_error_rate', 0):.1%}，本轮结果{verdict}。")
     return out
 
 
@@ -327,17 +418,20 @@ def render_markdown(report: Dict[str, Any]) -> str:
                  for t in defects]
         rows.append(
             f"| {arm['arm']} | " + " | ".join(cells)
-            + f" | {arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}/{arm.get('clean_total', 0)}"
+            + f" | {arm.get('clean_flagged', 0) + arm.get('clean_failed', 0) + arm.get('clean_stopped', 0)}/{arm.get('clean_total', 0)}"
             + f" | {arm.get('macro_recall_blocked', 0):.1%}"
             + f" | {arm.get('tokens', 0):,}"
             + f" | ¥{arm.get('cost_cny', 0):.2f} |")
 
+    debug_note = "（调试抽样，勿作为完整数据集结论）" if meta["dataset"].get("debug") else ""
     lines = [
         f"# {meta['title']}",
         "",
         f"- 缺陷集：{meta['dataset']['n_defects']} 条（{len(defects)} 类 × "
-        f"{meta['dataset']['per_type']}），干净样本 {meta['dataset']['n_clean']} 条",
-        "- 指标：`blocked` = 检出并回退原文；`干净样本干预率` = 干净样本被回退或异常中断的占比",
+        f"{meta['dataset']['per_type']}）{debug_note}，"
+        f"干净样本 {meta['dataset']['n_clean']} 条",
+        "- 指标：`blocked` = 检出并回退原文；`干净样本干预率` = 干净样本被回退、"
+        "异常中断或预算中止的占比",
         "- 数据与成本均来自 append-only token 账本",
         "",
         *head, *rows,
@@ -345,6 +439,10 @@ def render_markdown(report: Dict[str, Any]) -> str:
         "## 结论",
         "",
         *[f"{i + 1}. {c}" for i, c in enumerate(report["conclusions"])],
+        "",
+        "## 局限",
+        "",
+        *[f"- {x}" for x in meta.get("limitations", [])],
         "",
     ]
 
@@ -384,11 +482,16 @@ def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: s
         body_rows.append(
             f"<tr><td><b>{html_escape(arm['arm'])}</b><br><span class='muted'>"
             f"{html_escape(arm.get('description', ''))}</span></td>{cells}"
-            f"<td>{arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}/{arm.get('clean_total', 0)}</td>"
+            f"<td>{arm.get('clean_flagged', 0) + arm.get('clean_failed', 0) + arm.get('clean_stopped', 0)}/{arm.get('clean_total', 0)}</td>"
             f"<td>{arm.get('macro_recall_blocked', 0):.1%}</td>"
             f"<td>{arm.get('tokens', 0):,}</td><td>¥{arm.get('cost_cny', 0):.2f}</td></tr>")
 
     conclusions = "".join(f"<li>{html_escape(c)}</li>" for c in report["conclusions"])
+    limitations = "".join(
+        f"<li>{html_escape(x)}</li>" for x in meta.get("limitations", []))
+    limitations_block = (
+        f'<h2>5.1 局限</h2><div class="card"><ul>{limitations}</ul></div>'
+        if limitations else "")
     before_after_block = ""
     if before_after:
         before_after_block = f'<h2>3.1 Before / After</h2><div class="card">{before_after}</div>'
@@ -422,7 +525,8 @@ pre{{background:#212529;color:#f8f9fa;padding:14px;border-radius:8px;overflow:au
 </style></head><body><div class="wrap">
 <h1>{html_escape(meta['title'])}</h1>
 <p class="muted">缺陷集 {meta['dataset']['n_defects']} 条（{len(defects)} 类 × {meta['dataset']['per_type']}）
-· 干净样本 {meta['dataset']['n_clean']} 条 · 指标口径：blocked = 检出并回退原文</p>
+· 干净样本 {meta['dataset']['n_clean']} 条 · 指标口径：blocked = 检出并回退原文
+{('· <b>调试抽样，勿作为完整数据集结论</b>' if meta['dataset'].get('debug') else '')}</p>
 <p class="lead">目标不是"感觉改得更顺了"，而是在固定缺陷集上量化"能不能发现问题、能不能挡住问题、花多少钱"。</p>
 
 <h2>1. 消融：效果与成本</h2>
@@ -442,6 +546,7 @@ pre{{background:#212529;color:#f8f9fa;padding:14px;border-radius:8px;overflow:au
 
 <h2>5. 结论</h2>
 <div class="card"><ol>{conclusions}</ol></div>
+{limitations_block}
 {corrections_block}
 
 <h2>6. 复现</h2>
@@ -478,7 +583,10 @@ def main(argv=None) -> int:
         return 2
 
     trace = load_trace(Path(args.trace) if args.trace else None)
-    report = summarize(arms, trace)
+    results_path = Path(args.results)
+    manifests = (load_manifests(sorted(results_path.glob("manifest_*.json")))
+                 if results_path.is_dir() else [])
+    report = summarize(arms, trace, manifests)
 
     out = Path(args.out)
     fig_dir = out / "figures"
