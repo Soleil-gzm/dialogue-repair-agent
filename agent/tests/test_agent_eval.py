@@ -4,15 +4,37 @@
 """
 
 import json
+import random
 
 import pytest
 
 from agent.benchmark.agent_eval import (
     A3, A3L, A3R, A4, A4R, ArmResult, _parse_a2_output, build_runtime, run_arm,
 )
-from agent.benchmark.defects import generate
+from agent.benchmark.defects import generate, inject
 from agent.runtime.llm import FakeLLMClient, LLMResponse
 from agent.runtime.trace import TraceWriter
+
+
+class _ScriptClient:
+    """按脚本返回决策/工具调用，用于验证带判官与改写的完整闭环。"""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def chat(self, messages, **kwargs):
+        self.calls.append(kwargs)
+        item = self._responses.pop(0)
+        return LLMResponse(
+            text=item.get("text", ""),
+            input_tokens=item.get("tokens", 0),
+            tool_calls=item.get("tool_calls", []),
+        )
+
+
+def _call(name):
+    return {"tool_calls": [{"id": "c1", "name": name, "arguments": {}}]}
 
 
 class _CyclicClient:
@@ -178,6 +200,49 @@ class TestRewriteArm:
         assert result.recall("D3_fact_conflict") == 1.0
         assert result.recall("D6_missing_response") == 1.0
         assert result.failed == 0
+
+
+class TestA4RRewriteClosedLoop:
+    def test_rewrite_success_counts_as_repaired(self, dataset):
+        """判官报 D1 → 改写 → 复检通过 → accepted，这才是 repaired 而不是 blocked。"""
+        base, _ = dataset
+        clean = base[0]
+        bad, _ = inject(clean, "D1_off_topic", random.Random(3))
+        record = {"dialogue": bad, "defect": {"type": "D1_off_topic"}, "base_index": 0}
+
+        turn = next(
+            i for i, (a, b) in enumerate(zip(clean["messages"], bad["messages"]))
+            if a.get("content") != b.get("content")
+        )
+        fixed = clean["messages"][turn]["content"]
+        off_topic = [{"rule": "C3_off_topic", "detail": "答非所问", "turn": turn}]
+
+        calls = {"judge": 0}
+
+        def judge(_dialogue):
+            calls["judge"] += 1
+            return off_topic if calls["judge"] == 1 else []
+
+        client = _ScriptClient([
+            # 缺陷样本：两次校验 → 改写 → 复检 → 结束
+            _call("check_consistency"),
+            _call("check_coherence"),
+            _call("rewrite_segment"),
+            {"text": json.dumps({"content": fixed}, ensure_ascii=False)},
+            _call("check_consistency"),
+            _call("check_coherence"),
+            {"text": "复检通过"},
+            # 干净样本：校验通过直接结束
+            _call("check_consistency"),
+            _call("check_coherence"),
+            {"text": "校验通过"},
+        ])
+        result = run_arm(A4R, [clean], [record], client=client, judge=judge)
+
+        assert result.repaired == 1
+        assert result.repair_rate() == 1.0
+        assert result.per_type["D1_off_topic"]["blocked"] == 0
+        assert result.clean_flagged == 0
 
 
 class TestA2Parsing:

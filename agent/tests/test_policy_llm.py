@@ -145,6 +145,26 @@ class TestContract:
                     {"tool": "rewrite_segment", "ok": True, "turn": turn},
                 ]))
 
+    def test_recheck_allowed_after_rewrite(self, mini_dialogues):
+        """改写换掉了对话版本，复检看的是新内容，不算重复调用。"""
+        client = _StubClient(_call("check_consistency"))
+        dec = LLMPolicy(client, allow_rewrite=True).decide(
+            _state(mini_dialogues[0], history=[
+                {"tool": "check_consistency", "ok": False},
+                {"tool": "rewrite_segment", "ok": True, "turn": 1},
+            ]))
+        assert dec.tool == "check_consistency"
+
+    def test_recheck_blocked_after_failed_rewrite(self, mini_dialogues):
+        """改写失败没有改变对话，再跑校验就是空转。"""
+        client = _StubClient(_call("check_consistency"))
+        with pytest.raises(LLMPolicyError, match="重复调用"):
+            LLMPolicy(client, allow_rewrite=True).decide(
+                _state(mini_dialogues[0], history=[
+                    {"tool": "check_consistency", "ok": False},
+                    {"tool": "rewrite_segment", "ok": False, "turn": 1},
+                ]))
+
     def test_rewrite_does_not_unlock_other_tools(self, mini_dialogues):
         d = mini_dialogues[0]
         client = _StubClient(_call("check_consistency"))

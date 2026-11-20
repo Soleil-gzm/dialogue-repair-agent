@@ -224,13 +224,7 @@ class LLMPolicy:
             if name not in self._tool_names():
                 raise LLMPolicyError(f"模型选择了未注册的工具: {name!r}")
             if name in state.called_tools():
-                repeats = sum(1 for h in state.history if h.get("tool") == name)
-                repeated_rewrite = (
-                    self.allow_rewrite
-                    and name == "rewrite_segment"
-                    and repeats < MAX_REWRITES
-                )
-                if not repeated_rewrite:
+                if not self._repeat_allowed(name, state):
                     raise LLMPolicyError(f"模型重复调用工具: {name}")
             # 改写定位不到轮次时改走回退，而不是让整条样本 failed
             if name == "rewrite_segment" and RulePolicy._target_turn(state) is None:
@@ -251,6 +245,28 @@ class LLMPolicy:
         return Decision(ACTION_STOP, reason=reason[:MAX_REASON_CHARS])
 
     # ------------------------------------------------------------------ 内部
+    def _repeat_allowed(self, name: str, state: Any) -> bool:
+        """判定重复调用是否合法：只放行"状态已变、需要重看"的情形。
+
+        - 改写会清空 issues 并换掉对话版本，之后重跑校验是必须的；
+        - 只有成功的改写才解锁复检，失败的改写不能让模型无限重试。
+        """
+        history = list(state.history or [])
+        if not history:
+            return False
+
+        if self.allow_rewrite and name == "rewrite_segment":
+            used = sum(1 for h in history if h.get("tool") == name)
+            return used < MAX_REWRITES
+
+        if name in ("check_consistency", "check_coherence"):
+            last = max(i for i, h in enumerate(history) if h.get("tool") == name)
+            return any(
+                h.get("tool") == "rewrite_segment" and h.get("ok", True)
+                for h in history[last + 1:]
+            )
+        return False
+
     def _tool_names(self) -> set:
         if self.tools:
             return set(self.tools)
