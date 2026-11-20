@@ -22,20 +22,27 @@ from agent.runtime.state import dialogue_key as _dialogue_key
 
 from .coherence import C3_OFF_TOPIC
 
-JUDGE_VERSION = "coherence-judge-v1"
-RUBRIC_VERSION = "1.0"  # 判官 rubric / prompt 本身没有独立版本，先与 JUDGE_VERSION 对齐
+JUDGE_VERSION = "coherence-judge-v2"
+RUBRIC_VERSION = "2.0"
 
 # 单条消息渲染上限：判官只需判断意图是否对上，不需要读完整长文
 MAX_CONTENT_CHARS = 600
 MAX_TURNS = 60
 
 SYSTEM_PROMPT = (
-    "你是对话数据质检员，只判断客服回复是否答非所问。只输出 json，不要输出任何解释性文字。\n"
-    "判定标准：\n"
-    "1. 逐轮看 user 的诉求，再看紧随其后的 assistant 回复。\n"
-    "2. 回复在语义上回应了该诉求（哪怕措辞笼统）→ 不算问题。\n"
-    "3. 回复在讲另一件事（换了话题、答的是别的诉求）→ 判为 off_topic。\n"
-    "4. 不要因为信息不够具体、语气生硬而判 off_topic，只判是否跑题。"
+    "你是对话数据质检员，只判断客服回复是否跑题（答非所问）。只输出 json，不要输出任何解释性文字。\n"
+    "逐条 assistant 回复按以下步骤判断：\n"
+    "1. 看该回复之前最近一条 user 消息，确定用户这一轮在问什么。\n"
+    "2. 只要回复仍在这个话题上推进，就算回应：直接回答、承认并记录、承诺转交/升级，"
+    "或给出替代方案与下一步动作（如“稍后短信通知”“已帮您登记”“正在查询”）。\n"
+    "3. 只有回复明显在讲另一件事时才判 off_topic：答的是别的问题、模板串线，"
+    "或内容与用户诉求没有任何语义关联。\n"
+    "4. 不要因为回答不具体、不完整、没给出确切时间/型号/金额而判 off_topic。\n"
+    "5. 拿不准时不要报问题。\n"
+    "示例（均不应判 off_topic）：\n"
+    "user: 这个型号和页面写的不一样 -> assistant: 您反馈的问题我记录下来了，会转给对应同事。\n"
+    "user: 能不能给个大概时间 -> assistant: 稍后会有短信通知，请留意。\n"
+    "user: 帮我催一下 -> assistant: 我已为您催办，预计两个工作日内有进展。"
 )
 
 USER_TEMPLATE = (
