@@ -15,10 +15,9 @@
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Protocol
 
-from agent.runtime.llm import LLMClient
-from agent.runtime.state import dialogue_key as _dialogue_key
+from ..canonical import dialogue_key as _dialogue_key
 
 from .coherence import C3_OFF_TOPIC
 
@@ -56,6 +55,13 @@ USER_TEMPLATE = (
 
 class JudgeError(RuntimeError):
     """判官输出不符合契约。"""
+
+
+class ChatClient(Protocol):
+    """判官只依赖最小聊天接口，不依赖 runtime 的具体客户端实现。"""
+
+    def chat(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any:
+        ...
 
 
 def render_dialogue(dialogue: Dict[str, Any]) -> str:
@@ -113,7 +119,7 @@ def parse_verdict(text: str, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
 class LLMJudge:
     """把 LLMClient 适配成 check_coherence 的判官。"""
 
-    client: LLMClient
+    client: ChatClient
     version: str = JUDGE_VERSION
     # 推理型模型（如 deepseek-flash）会先消耗思考 token；给小了会导致 content 为空
     max_tokens: int = 1024

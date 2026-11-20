@@ -9,12 +9,11 @@
 """
 
 import copy
-import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..canonical import sha256_obj
 from .budget import Budget
 from .policy import ACTION_CALL_TOOL, ACTION_STOP, Policy
 from .state import AgentState
@@ -55,8 +54,7 @@ class AgentResult:
 
 def _args_fingerprint(tool: str, args: Dict[str, Any]) -> str:
     """参数指纹：用于识别"同一决策反复出现"。"""
-    payload = json.dumps({"tool": tool, "args": args}, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return sha256_obj({"tool": tool, "args": args})[:16]
 
 
 class AgentRuntime:

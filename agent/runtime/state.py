@@ -4,20 +4,13 @@
 `original` 永远保留原文，供回退与 diff 使用。
 """
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from ..canonical import dialogue_key
 from .budget import Budget
 
 STATUS_RUNNING = "running"
-
-
-def dialogue_key(dialogue: Dict[str, Any]) -> str:
-    """内容哈希作稳定主键：数据没有 dialogue_id，下标跨 run 不稳定。"""
-    payload = json.dumps(dialogue, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass

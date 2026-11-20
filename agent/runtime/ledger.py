@@ -92,8 +92,17 @@ class TokenLedger:
         return entry
 
     # ------------------------------------------------------------------ 汇总
-    def total_tokens(self) -> int:
-        return sum(e.total_tokens for e in self.entries)
+    def total_tokens(self, *, include_cached: bool = True) -> int:
+        """累计 token。
+
+        缓存命中行仍保留原始 token 数（用于复用率分析），但它不再产生实际消耗；
+        臂级 token 指标应传 include_cached=False，避免重复请求被放大计费。
+        """
+        return sum(e.total_tokens for e in self.entries
+                   if include_cached or not e.cached)
+
+    def n_calls(self, *, include_cached: bool = True) -> int:
+        return sum(1 for e in self.entries if include_cached or not e.cached)
 
     def total_cost(self) -> float:
         return round(sum(e.cost_cny for e in self.entries), 8)

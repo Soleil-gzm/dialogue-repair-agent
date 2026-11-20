@@ -9,7 +9,6 @@
 4xx 参数错误重试没有意义，直接失败——避免把配置问题伪装成抖动。
 """
 
-import hashlib
 import json
 import os
 import time
@@ -19,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_exponential
 
+from ..canonical import sha256_obj as _sha256
 from .config import LLMSettings, judge_settings
 from .ledger import LedgerEntry, Pricing, TokenLedger
 from .llm import LLMResponse, StageRoutedClient
@@ -44,11 +44,6 @@ class LLMParseError(LLMError):
 
 class LLMConfigError(LLMError):
     """请求参数不合法，重试无意义，应在本地提前拦截。"""
-
-
-def _sha256(obj: Any) -> str:
-    payload = json.dumps(obj, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _is_retryable(exc: BaseException) -> bool:
