@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..eval.coherence import check_coherence
+from ..eval.coherence import C0_JUDGE_ERROR, check_coherence
 from ..eval.judge import JUDGE_VERSION, RUBRIC_VERSION, LLMJudge
 from ..eval.rules import RULES_VERSION, check_consistency
 from ..runtime.budget import Budget
@@ -86,12 +86,16 @@ class ArmResult:
     clean_flagged: int = 0
     # 干净样本未跑完（异常）：同样属于"被干预"，不得美化成未误报
     clean_failed: int = 0
+    # 干净样本因预算/墙钟中止：环境噪声，但也不能算"没误伤"
+    clean_stopped: int = 0
     # 检出后修复并复检通过的样本数（修复能力，区别于回退）
     repaired: int = 0
     failed: int = 0
     # 因预算/墙钟触顶而中止的样本数：宿主机待机等环境噪声会让它变高，
     # 单独计数才能避免把"环境中断"误读成"模型没检出"
     stopped: int = 0
+    # 判官故障样本数：基础设施错误不能算作模型检出/阻断，需单独隔离
+    judge_error: int = 0
     tokens: int = 0
     calls: int = 0
     cost_cny: float = 0.0
@@ -111,14 +115,24 @@ class ArmResult:
             return 0.0
         return round(sum(r.get(key, 0) / r["total"] for r in rows) / len(rows), 4)
 
+    def judge_error_rate(self) -> float:
+        denominator = sum(r.get("total", 0) for r in self.per_type.values())
+        denominator += self.clean_total
+        return round(self.judge_error / denominator, 4) if denominator else 0.0
+
+    def valid(self) -> bool:
+        """判官故障超过 5% 时整轮结果不可采信。"""
+        return self.judge_error_rate() <= 0.05
+
     def clean_intervention_rate(self) -> float:
-        """干净样本干预率：被回退或被异常中断的干净样本占比。
+        """干净样本干预率：被回退、被异常中断或被预算中止的干净样本占比。
 
         未跑完的样本按"被干预"计，避免失败样本被美化成"没误伤"（R7）。
         """
         if not self.clean_total:
             return 0.0
-        return round((self.clean_flagged + self.clean_failed) / self.clean_total, 4)
+        intervened = self.clean_flagged + self.clean_failed + self.clean_stopped
+        return round(intervened / self.clean_total, 4)
 
     def repair_rate(self) -> float:
         """修复成功率 = 修复通过数 / 被标记数（设计文档 L3，目标 ≥ 0.70）。"""
@@ -137,9 +151,13 @@ class ArmResult:
             "clean_total": self.clean_total,
             "clean_flagged": self.clean_flagged,
             "clean_failed": self.clean_failed,
+            "clean_stopped": self.clean_stopped,
             "clean_intervention_rate": self.clean_intervention_rate(),
             "failed": self.failed,
             "stopped": self.stopped,
+            "judge_error": self.judge_error,
+            "judge_error_rate": self.judge_error_rate(),
+            "valid": self.valid(),
             "tokens": self.tokens,
             "calls": self.calls,
             "cost_cny": self.cost_cny,
@@ -147,11 +165,48 @@ class ArmResult:
         }
 
 
+def _judge_failed(result: Any) -> bool:
+    """样本是否因判官故障被污染。"""
+    issues = list(getattr(result, "seen_issues", []) or [])
+    issues += list(getattr(result, "issues", []) or [])
+    return any((v or {}).get("rule") == C0_JUDGE_ERROR for v in issues)
+
+
+def is_clean_intervention(result: Any) -> bool:
+    """干净样本是否被干预。
+
+    四种都属于干预，不能只算 fallback：
+    - fallback / failed / stopped；
+    - 报出过任何 issue（含误报后改写成功：issues 被清空但 seen_issues 仍在）；
+    - 判官故障（无法证明未误伤）。
+    """
+    return (
+        getattr(result, "status", "") in ("fallback", "failed", "stopped")
+        or bool(getattr(result, "issues", None))
+        or bool(getattr(result, "seen_issues", None))
+        or _judge_failed(result)
+    )
+
+
+def _assistant_contents(dialogue: Dict[str, Any]) -> List[str]:
+    return [str(m.get("content", "")) for m in (dialogue or {}).get("messages") or []
+            if m.get("role") == "assistant"]
+
+
+def a2_clean_intervened(parsed: Dict[str, Any], original: Dict[str, Any]) -> bool:
+    """A2 干净样本是否被干预：解析失败，或 assistant 内容被改动。"""
+    if not parsed.get("ok"):
+        return True
+    return _assistant_contents(parsed["dialogue"]) != _assistant_contents(original)
+
+
 def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
                   run_id: str = "ablation", trace: Any = None):
     """按臂装配运行时；会先清空工具注册表，避免跨臂污染。"""
     if arm not in ARMS:
         raise ValueError(f"未知臂: {arm}（可选 {ARMS}）")
+    if arm == A2:
+        raise ValueError("A2 走单次重写路径（run_a2_dialogue），不使用 AgentRuntime")
 
     ToolRegistry.clear()
 
@@ -318,9 +373,9 @@ def run_arm(
     started = time.monotonic()
     runtime = build_runtime(arm, client=client, judge=judge, run_id=run_id, trace=trace)
     result = ArmResult(arm=arm)
-    tokens_before = ledger.total_tokens() if ledger else 0
+    tokens_before = ledger.total_tokens(include_cached=False) if ledger else 0
     cost_before = ledger.total_cost() if ledger else 0.0
-    calls_before = len(ledger.entries) if ledger else 0
+    calls_before = ledger.n_calls(include_cached=False) if ledger else 0
 
     for record in defects:
         dtype = (record.get("defect") or {}).get("type") or "unknown"
@@ -331,10 +386,16 @@ def run_arm(
         r = runtime.run(record["dialogue"], reference=reference)
 
         result.tokens += r.tokens
+        judge_failed = _judge_failed(r)
+        if judge_failed:
+            result.judge_error += 1
         if r.status == "failed":
             result.failed += 1
         if r.status == "stopped":
             result.stopped += 1
+        # 判官故障是基础设施问题，不得计成"模型检出/阻断"
+        if judge_failed:
+            continue
         if r.issues or r.seen_issues:
             row["detected"] += 1
         if r.status == "fallback":
@@ -360,19 +421,21 @@ def run_arm(
         result.clean_total += 1
         r = runtime.run(dialogue)
         result.tokens += r.tokens
+        if _judge_failed(r):
+            result.judge_error += 1
         if r.status == "failed":
             result.failed += 1
-        if r.status == "stopped":
-            result.stopped += 1
-        if r.status == "fallback":
-            result.clean_flagged += 1
-        elif r.status == "failed":
             result.clean_failed += 1
+        elif r.status == "stopped":
+            result.stopped += 1
+            result.clean_stopped += 1
+        elif is_clean_intervention(r):
+            result.clean_flagged += 1
 
     if ledger:
-        result.tokens = ledger.total_tokens() - tokens_before
+        result.tokens = ledger.total_tokens(include_cached=False) - tokens_before
         result.cost_cny = round(ledger.total_cost() - cost_before, 8)
-        result.calls = len(ledger.entries) - calls_before
+        result.calls = ledger.n_calls(include_cached=False) - calls_before
 
     result.elapsed_s = time.monotonic() - started
     return result
@@ -389,9 +452,9 @@ def _run_a2(
     """A2 专用路径：不经过 AgentRuntime 决策循环，一次 LLM 重写 + 无条件接受。"""
     started = time.monotonic()
     result = ArmResult(arm=A2)
-    tokens_before = ledger.total_tokens() if ledger else 0
+    tokens_before = ledger.total_tokens(include_cached=False) if ledger else 0
     cost_before = ledger.total_cost() if ledger else 0.0
-    calls_before = len(ledger.entries) if ledger else 0
+    calls_before = ledger.n_calls(include_cached=False) if ledger else 0
 
     for record in defects:
         dtype = (record.get("defect") or {}).get("type") or "unknown"
@@ -399,10 +462,11 @@ def _run_a2(
         row["total"] += 1
 
         reference = base[record["base_index"]] if base else None
-        # pre-A2 违规：用 reference（干净原文）和 dialogue（缺陷版）比一致性
+        # pre-A2 违规：噪声输入是否已能被确定性检查看见（不含 LLM 判官）
         pre_violations = check_consistency(
             before=reference or {}, after=record["dialogue"],
         ) if reference else []
+        pre_violations += check_coherence(record["dialogue"])
 
         r = run_a2_dialogue(client, record["dialogue"], run_id=f"{run_id}_a2")
         result.tokens += r["tokens"]
@@ -422,15 +486,14 @@ def _run_a2(
             result.failed += 1
             result.clean_failed += 1
             continue
-        # 干净样本被 A2 改坏：post-A2 与原文的一致性校验失败
-        fidelity = check_consistency(before=dialogue, after=r["dialogue"])
-        if fidelity:
+        # 干净样本被 A2 动过（哪怕仍通过一致性）就算干预
+        if a2_clean_intervened(r, dialogue):
             result.clean_flagged += 1
 
     if ledger:
-        result.tokens = ledger.total_tokens() - tokens_before
+        result.tokens = ledger.total_tokens(include_cached=False) - tokens_before
         result.cost_cny = round(ledger.total_cost() - cost_before, 8)
-        result.calls = len(ledger.entries) - calls_before
+        result.calls = ledger.n_calls(include_cached=False) - calls_before
 
     result.elapsed_s = time.monotonic() - started
     return result
@@ -447,6 +510,7 @@ def compare_arms(
     defects: List[dict],
     *,
     client: Any = None,
+    judge: Any = None,
     run_id: str = "compare",
     ledger: Any = None,
     metric: str = "blocked",
@@ -460,18 +524,25 @@ def compare_arms(
     Returns:
         包含两个 ArmResult、win_rate 和 mcnemar 结果的字典
     """
+    if metric not in ("blocked", "detected", "clean", "no_leak"):
+        raise ValueError(f"未知 metric: {metric}")
+
     # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
     outcomes_a = _collect_outcomes(
-        arm_a, base, defects, client=client, run_id=f"{run_id}_{arm_a}",
+        arm_a, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_a}",
         ledger=ledger, metric=metric, trace=trace,
     )
     outcomes_b = _collect_outcomes(
-        arm_b, base, defects, client=client, run_id=f"{run_id}_{arm_b}",
+        arm_b, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_b}",
         ledger=ledger, metric=metric, trace=trace,
     )
 
     # 两边长度一致（同一数据），outcomes 顺序 = defects + base
-    assert len(outcomes_a) == len(outcomes_b)
+    if len(outcomes_a) != len(outcomes_b):
+        raise ValueError(
+            f"两个臂的 outcome 长度不一致: {arm_a}={len(outcomes_a)}, "
+            f"{arm_b}={len(outcomes_b)}"
+        )
 
     from .l3_stats import win_rate, mcnemar
     wr = win_rate(outcomes_a, outcomes_b)
@@ -500,64 +571,74 @@ def compare_arms(
     }
 
 
+def _set_arm(obj: Any, arm: str) -> None:
+    setter = getattr(obj, "set_arm", None)
+    if callable(setter):
+        setter(arm)
+
+
 def _collect_outcomes(
     arm: str,
     base: List[dict],
     defects: List[dict],
     *,
     client: Any,
+    judge: Any = None,
     run_id: str,
     ledger: Any,
     metric: str,
     trace: Any = None,
 ) -> List[bool]:
-    """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome。
+    """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome（True=好）。
 
-    metric='blocked' → defect 样本返回 arm 是否 fallback；clean 样本返回 arm 是否没误报（True=好）
-    metric='detected' → defect 样本返回 arm 是否检出；clean 样本同 blocked
-    metric='no_leak' → defect 样本返回缺陷是否未泄露（回退或修复通过）；clean 样本同 blocked
-    metric='clean'   → 只跑 clean 样本，返回是否没被标记
+    metric='blocked'  → defect：是否 fallback；clean：是否未被干预
+    metric='detected' → defect：是否检出；clean：是否未被干预
+    metric='no_leak'  → defect：独立复检后缺陷是否未泄露；clean：是否未被干预
+    metric='clean'    → 只跑 clean 样本，返回是否未被干预
 
+    判官故障（C0_JUDGE_ERROR）不能算作检出或阻断，相关样本一律按 False 处理。
     """
-    # 不走 run_arm（它是 aggregate only），直接调底层路径收集 per-sample
+    if arm == A2:
+        return _collect_outcomes_a2(
+            base, defects, client=client, judge=judge, run_id=run_id,
+            metric=metric,
+        )
+
+    _set_arm(client, arm)
+    _set_arm(judge, arm)
+
+    runtime = build_runtime(arm, client=client, judge=judge, run_id=run_id, trace=trace)
+
+    # no_leak 用独立评估器复检最终输出，不采信 agent 自身的校验结论。
+    # 无判官时无法检测 D1 语义泄漏，直接报错而不是静默退化。
+    leak_judge = None
+    if metric == "no_leak":
+        leak_judge = judge or (LLMJudge(client=client, run_id=f"{run_id}_leak")
+                               if client is not None else None)
+        if leak_judge is None:
+            raise ValueError("metric=no_leak 需要判官；请注入 judge 或在线 client")
+
     outcomes: List[bool] = []
 
-    if arm == A2:
-        return _collect_outcomes_a2(base, defects, client=client, run_id=run_id,
-                                     ledger=ledger, metric=metric)
+    # clean 指标只跑干净样本，避免把缺陷 outcome 混进来
+    if metric != "clean":
+        for record in defects:
+            reference = base[record["base_index"]] if base else None
+            r = runtime.run(record["dialogue"], reference=reference)
+            judge_failed = _judge_failed(r)
+            if metric == "detected":
+                outcomes.append(bool(r.issues or r.seen_issues) and not judge_failed)
+            elif metric == "no_leak":
+                violations = (check_consistency(before=reference, after=r.dialogue)
+                              if reference else [])
+                violations += check_coherence(r.dialogue, judge=leak_judge)
+                outcomes.append(not violations and not judge_failed)
+            else:  # blocked
+                outcomes.append(r.status == "fallback" and not judge_failed)
 
-    runtime = build_runtime(arm, client=client, run_id=run_id, trace=trace)
-    # no_leak 用独立评估器复检最终输出，不采信 agent 自身的校验结论
-    leak_judge = None
-    if metric == "no_leak" and client is not None:
-        from ..eval.judge import LLMJudge
-
-        leak_judge = LLMJudge(client=client, run_id=f"{run_id}_leak")
-
-    # defect samples
-    for record in defects:
-        reference = base[record["base_index"]] if base else None
-        r = runtime.run(record["dialogue"], reference=reference)
-        if metric == "detected":
-            outcomes.append(bool(r.issues or r.seen_issues))
-        elif metric == "no_leak":
-            # 缺陷未泄露：独立复检最终输出
-            # 结构/实体看规则对比，重复空转/空回复看连贯性规则，D1 看判官
-            violations = (check_consistency(before=reference, after=r.dialogue)
-                          if reference else [])
-            violations += check_coherence(r.dialogue, judge=leak_judge)
-            outcomes.append(not violations)
-        else:  # blocked
-            outcomes.append(r.status == "fallback")
-
-    # clean samples
     for dialogue in base:
         r = runtime.run(dialogue)
-        # clean 样本：metric='blocked'/'detected' 都看"没被干预"
-        # 被回退、异常中断或报出 issues 都算干预（失败不得美化成未误报）
-        outcomes.append(
-            r.status not in ("fallback", "failed") and not r.issues
-        )
+        outcomes.append(not is_clean_intervention(r))
 
     return outcomes
 
@@ -567,25 +648,47 @@ def _collect_outcomes_a2(
     defects: List[dict],
     *,
     client: Any,
+    judge: Any = None,
     run_id: str,
-    ledger: Any,
     metric: str,
 ) -> List[bool]:
-    """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。"""
+    """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。
+
+    A2 没有 fallback，因此 blocked 恒为 False；detected 用确定性预检
+    （一致性 + 连贯性规则，无判官）判断噪声是否可见；no_leak 才真正调用
+    A2 改写并做独立复检。
+    """
+    _set_arm(client, A2)
+    _set_arm(judge, A2)
     outcomes: List[bool] = []
 
-    for record in defects:
-        reference = base[record["base_index"]] if base else None
-        # A2 没有回退：只有改写后与干净参照一致，才算缺陷未泄露
-        r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_d")
-        fidelity = (check_consistency(before=reference, after=r["dialogue"])
-                    if reference else [])
-        outcomes.append(not r["parse_error"] and not fidelity)
+    if metric == "blocked":
+        # 无回退能力：defect 侧不需要花一次生成就能给出确定答案
+        outcomes = [False] * len(defects)
+    elif metric == "detected":
+        # 检出只看噪声输入是否已能被确定性检查看见，不调用 A2
+        for record in defects:
+            reference = base[record["base_index"]] if base else None
+            violations = (check_consistency(before=reference, after=record["dialogue"])
+                          if reference else [])
+            violations += check_coherence(record["dialogue"])
+            outcomes.append(bool(violations))
+    elif metric == "no_leak":
+        leak_judge = judge or (LLMJudge(client=client, run_id=f"{run_id}_leak")
+                               if client is not None else None)
+        if leak_judge is None:
+            raise ValueError("metric=no_leak 需要判官；请注入 judge 或在线 client")
+        for record in defects:
+            reference = base[record["base_index"]] if base else None
+            r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_d")
+            violations = (check_consistency(before=reference, after=r["dialogue"])
+                          if reference else [])
+            violations += check_coherence(r["dialogue"], judge=leak_judge)
+            outcomes.append(not r["parse_error"] and not violations)
 
     for dialogue in base:
         r = run_a2_dialogue(client, dialogue, run_id=run_id + "_c")
-        fidelity = check_consistency(before=dialogue, after=r["dialogue"])
-        outcomes.append(not bool(fidelity) and not r["parse_error"])
+        outcomes.append(not a2_clean_intervened(r, dialogue))
 
     return outcomes
 
@@ -658,7 +761,12 @@ def main(argv=None) -> int:
         if not settings.has_key():
             print("[ERROR] 未找到 DEEPSEEK_API_KEY", file=sys.stderr)
             return 2
-        ledger = TokenLedger(root / "logs" / "agent" / f"ledger_compare.jsonl")
+        # 每次运行独立账本，避免多次尝试混进同一文件
+        stamp_for_ledger = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        ledger_dir = root / "logs" / "agent"
+        ledger_dir.mkdir(parents=True, exist_ok=True)
+        tag = args.compare.replace(",", "_") if args.compare else args.arm
+        ledger = TokenLedger(ledger_dir / f"ledger_{tag}_{stamp_for_ledger}.jsonl")
         client = build_stage_clients(ledger=ledger)
         model_name = settings.model
         judge_model_name = judge_settings().model
@@ -672,14 +780,41 @@ def main(argv=None) -> int:
         trace = TraceWriter(args.trace)
 
     if args.compare:
-        arm_a, arm_b = [s.strip() for s in args.compare.split(",")]
+        parts = [s.strip() for s in args.compare.split(",") if s.strip()]
+        if len(parts) != 2:
+            print("[ERROR] --compare 必须是恰好两个臂，如 \"A3,A2\"", file=sys.stderr)
+            return 2
+        arm_a, arm_b = parts
         for arm in (arm_a, arm_b):
             if arm not in ARMS:
                 print(f"[ERROR] 未知臂: {arm}", file=sys.stderr)
                 return 2
+
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
                                ledger=ledger, metric=args.metric, trace=trace)
+        uses_judge = args.metric == "no_leak" or any(
+            arm in (A4, A4R) for arm in (arm_a, arm_b))
+        payload["run"] = {
+            "limit": args.limit,
+            "n_defects": len(defects),
+            "n_base": len(base),
+            "generated_at": stamp,
+        }
+        # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
+        payload["fingerprint"] = {
+            "input": {
+                "base": input_fingerprint(pub / "base_v1.json", root=root),
+                "defects": input_fingerprint(pub / "defects_v1.jsonl", root=root),
+            },
+            "evaluator": evaluator_fingerprint(
+                rules_version=RULES_VERSION,
+                judge_prompt_version=JUDGE_VERSION,
+                judge_model=judge_model_name if uses_judge else "none",
+                rubric_version=RUBRIC_VERSION,
+                judge_temperature=0.0,
+            ),
+        }
         if ledger:
             ledger.close()
         if trace:
@@ -692,6 +827,19 @@ def main(argv=None) -> int:
             out = Path(args.out)
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(text + "\n", encoding="utf-8")
+            write_manifest(
+                build_manifest(
+                    root=root,
+                    profile="compare",
+                    arms=[arm_a, arm_b],
+                    models={"generate": model_name,
+                            "judge": judge_model_name if uses_judge else None},
+                    extra={"limit": args.limit, "n_defects": len(defects),
+                           "n_base": len(base), "metric": args.metric,
+                           "compare": [arm_a, arm_b]},
+                ),
+                out.parent / f"manifest_{arm_a}_vs_{arm_b}.json",
+            )
             print(f"[OK] {arm_a} vs {arm_b} -> {out}")
         else:
             print(text)
@@ -706,6 +854,13 @@ def main(argv=None) -> int:
         trace.close()
 
     payload = result.to_dict()
+    uses_judge = args.arm in (A4, A4R)
+    payload["run"] = {
+        "limit": args.limit,
+        "n_defects": len(defects),
+        "n_base": len(base),
+        "generated_at": stamp,
+    }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
     payload["fingerprint"] = {
         "input": {
@@ -715,7 +870,7 @@ def main(argv=None) -> int:
         "evaluator": evaluator_fingerprint(
             rules_version=RULES_VERSION,
             judge_prompt_version=JUDGE_VERSION,
-            judge_model=judge_model_name if args.arm in (A4, A4R) else "none",
+            judge_model=judge_model_name if uses_judge else "none",
             rubric_version=RUBRIC_VERSION,
             judge_temperature=0.0,
         ),

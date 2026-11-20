@@ -3,13 +3,15 @@
 只验证"指标怎么算"，不验证模型好坏；真实数值由 benchmark 运行产出。
 """
 
+import copy
 import json
 import random
 
 import pytest
 
 from agent.benchmark.agent_eval import (
-    A3, A3L, A3R, A4, A4R, ArmResult, _parse_a2_output, build_runtime, run_arm,
+    A2, A3, A3L, A3R, A4, A4R, ArmResult, _collect_outcomes_a2, _parse_a2_output,
+    a2_clean_intervened, build_runtime, run_arm,
 )
 from agent.benchmark.defects import generate, inject
 from agent.runtime.llm import FakeLLMClient, LLMResponse
@@ -247,6 +249,151 @@ class TestA4RRewriteClosedLoop:
         assert len(result.samples) == 1
         assert result.samples[0]["type"] == "D1_off_topic"
         assert result.samples[0]["key"]
+
+
+class TestL3Stats:
+    """统计层必须是可信的：正态 CDF 与精确二项都不能再产生假显著。"""
+
+    def test_normal_cdf_matches_known_value(self):
+        from agent.benchmark.l3_stats import _normal_cdf
+
+        assert _normal_cdf(0.0) == pytest.approx(0.5)
+        assert _normal_cdf(1.959964) == pytest.approx(0.975, abs=1e-5)
+        assert _normal_cdf(-1.959964) == pytest.approx(0.025, abs=1e-5)
+
+    def test_mcnemar_exact_4_vs_0(self):
+        from agent.benchmark.l3_stats import mcnemar
+
+        mn = mcnemar([False] * 4, [True] * 4)
+        assert mn.method == "exact"
+        assert mn.n10 + mn.n01 == 4
+        assert mn.p_value == pytest.approx(0.125)
+
+    def test_mcnemar_exact_2_vs_0(self):
+        from agent.benchmark.l3_stats import mcnemar
+
+        mn = mcnemar([False] * 2, [True] * 2)
+        assert mn.p_value == pytest.approx(0.5)
+
+    def test_large_sample_uses_chi2(self):
+        from agent.benchmark.l3_stats import mcnemar
+
+        # 30 个不一致对（>=25）才走卡方近似
+        a = [False] * 30 + [True] * 30
+        b = [True] * 30 + [True] * 30
+        mn = mcnemar(a, b)
+        assert mn.method == "chi2"
+        assert 0.0 <= mn.p_value <= 1.0
+        assert mn.p_value < 0.05
+
+
+class _EchoA2Client:
+    """A2 桩：把输入的对话原样（或按 mutate 改写后）回显。"""
+
+    def __init__(self, mutate=None):
+        self.mutate = mutate
+        self.calls = 0
+        self.arm = None
+
+    def set_arm(self, arm):
+        self.arm = arm
+
+    def chat(self, messages, **kwargs):
+        self.calls += 1
+        payload = json.loads(messages[-1]["content"])
+        if self.mutate:
+            payload = self.mutate(payload)
+        return LLMResponse(text=json.dumps(payload, ensure_ascii=False),
+                           input_tokens=1)
+
+
+_CLEAN_DIALOGUE = {
+    "messages": [
+        {"role": "system", "content": "角色说明"},
+        {"role": "user", "content": "订单什么时候到？"},
+        {"role": "assistant", "content": "预计明天送达。"},
+    ]
+}
+_BAD_DIALOGUE = {
+    "messages": [
+        {"role": "system", "content": "角色说明"},
+        {"role": "user", "content": "订单什么时候到？"},
+        {"role": "assistant", "content": "请先付款。"},
+    ]
+}
+_D1_RECORD = {
+    "dialogue": _BAD_DIALOGUE,
+    "defect": {"type": "D1_off_topic"},
+    "base_index": 0,
+}
+
+
+class TestA2Outcomes:
+    """A2 的 outcome 必须按 metric 分流，不能所有指标都拿一致性凑数。"""
+
+    def test_blocked_is_always_false_for_defects(self):
+        client = _EchoA2Client()
+        out = _collect_outcomes_a2(
+            [_CLEAN_DIALOGUE], [_D1_RECORD], client=client, run_id="t",
+            metric="blocked")
+        assert out[0] is False
+        assert out[1] is True
+        assert client.arm == A2
+
+    def test_clean_metric_only_returns_clean_samples(self):
+        client = _EchoA2Client()
+        out = _collect_outcomes_a2(
+            [_CLEAN_DIALOGUE], [_D1_RECORD], client=client, run_id="t",
+            metric="clean")
+        assert out == [True]
+
+    def test_detected_uses_deterministic_checks(self):
+        client = _EchoA2Client()
+        out = _collect_outcomes_a2(
+            [_CLEAN_DIALOGUE], [_D1_RECORD], client=client, run_id="t",
+            metric="detected")
+        # check_consistency/结构规则看不出 D1，A2 不能凭空记检出
+        assert out[0] is False
+
+    def test_no_leak_uses_independent_judge(self):
+        client = _EchoA2Client()
+        out = _collect_outcomes_a2(
+            [_CLEAN_DIALOGUE], [_D1_RECORD], client=client,
+            judge=lambda _d: [{"rule": "C3_off_topic"}],
+            run_id="t", metric="no_leak")
+        assert out[0] is False, "判官判定仍跑题 → 缺陷泄露"
+
+    def test_clean_intervention_detects_changed_content(self):
+        def mutate(payload):
+            payload["messages"][-1]["content"] = "基于文档更新，预计后日送达。"
+            return payload
+
+        r = {"ok": True, "dialogue": mutate(copy.deepcopy(_CLEAN_DIALOGUE))}
+        assert a2_clean_intervened(r, _CLEAN_DIALOGUE) is True
+        echo = {"ok": True, "dialogue": _CLEAN_DIALOGUE}
+        assert a2_clean_intervened(echo, _CLEAN_DIALOGUE) is False
+        assert a2_clean_intervened({"ok": False}, _CLEAN_DIALOGUE) is True
+
+
+class TestJudgeFailureIsolation:
+    def test_judge_error_is_not_detection_or_block(self):
+        client = _ScriptClient([
+            _call("check_consistency"),
+            _call("check_coherence"),
+            _call("fallback_keep"),
+            {"text": "结束"},
+        ])
+
+        def boom(_dialogue):
+            raise RuntimeError("judge down")
+
+        result = run_arm(A4, [], [_D1_RECORD], client=client, judge=boom)
+        row = result.per_type["D1_off_topic"]
+        assert result.judge_error == 1
+        assert row["total"] == 1
+        assert row["detected"] == 0
+        assert row["blocked"] == 0
+        assert result.valid() is False  # 1/1 故障率超过 5%
 
 
 class TestA2Parsing:
