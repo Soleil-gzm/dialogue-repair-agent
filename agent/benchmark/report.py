@@ -508,5 +508,66 @@ def main(argv=None) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# 人工抽检清单
+# --------------------------------------------------------------------------
+
+REVIEW_CHECKLIST = (
+    "1. 角色归属：改写后是否仍由不该发言的角色说话（D4 角色混淆重点）；",
+    "2. 实体保真：订单号、金额、时间、人名等是否被悄悄替换；",
+    "3. 是否真的对题：回答是否解决了用户的问题，而不是只让句子自洽；",
+    "4. 是否偷换承诺：有没有新增原文没有的承诺或补偿。",
+)
+
+
+def _json_block(obj: Any) -> str:
+    return "```json\n" + json.dumps(obj, ensure_ascii=False, indent=2) + "\n```"
+
+
+def write_review_markdown(path: Any, samples: Sequence[Dict[str, Any]], *,
+                          arm: str = "", generated_at: str = "") -> Path:
+    """导出「自动判为修复通过」的样本对照，供人工确认不是假修复。
+
+    自动指标只能证明"改写后过了校验"，证明不了语义正确；
+    抽检范围固定为全部 repaired，避免在 failed/fallback 里大海捞针。
+    """
+    lines = [
+        f"# {arm or 'Agent'} 人工抽检清单",
+        "",
+        f"- 生成时间：{generated_at or '未标注'}",
+        f"- 抽检范围：全部 repaired 样本（{len(samples)} 条）",
+        "- 这些样本被自动指标判为「修复通过」，需要确认不是假修复。",
+        "",
+        "## 核对要点",
+        "",
+        *REVIEW_CHECKLIST,
+        "",
+        "> 假修复请单独计数，不混入自动 repair_rate。",
+    ]
+    if not samples:
+        lines += ["", "本轮没有 repaired 样本。"]
+    for i, s in enumerate(samples, 1):
+        label = DEFECT_LABELS.get(s.get("type", ""), s.get("type", "unknown"))
+        lines += [
+            "",
+            f"## {i}. {label}",
+            "",
+            f"- trace key：`{s.get('key', '')}`",
+            f"- 自动状态：{s.get('status', '')}",
+            f"- 结束原因：{s.get('reason') or '（模型未给理由）'}",
+        ]
+        for issue in s.get("seen_issues") or []:
+            lines.append(f"- 检出违规：{issue.get('rule')}: {issue.get('detail')}")
+        lines += [
+            "", "### 干净参照", "", _json_block(s.get("reference") or {}),
+            "", "### 缺陷版", "", _json_block(s.get("input") or {}),
+            "", "### 最终版", "", _json_block(s.get("final") or {}),
+        ]
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out
+
+
 if __name__ == "__main__":
     raise SystemExit(main())

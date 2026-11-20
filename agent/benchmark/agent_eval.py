@@ -42,6 +42,7 @@ from ..tools import register_all
 from ..tools.rewrite_segment import REWRITE_SEGMENT, make_rewrite_segment
 from .fingerprint import evaluator_fingerprint, input_fingerprint
 from .manifest import build_manifest, write_manifest
+from .report import write_review_markdown
 
 A2 = "A2"
 A3 = "A3"
@@ -95,6 +96,8 @@ class ArmResult:
     calls: int = 0
     cost_cny: float = 0.0
     elapsed_s: float = 0.0
+    # 已修复样本的原始对照，供 --review 导出人工抽检；不进入 to_dict
+    samples: List[Dict[str, Any]] = field(default_factory=list)
 
     # ------------------------------------------------------------------ 指标
     def recall(self, defect_type: str, key: str = "blocked") -> float:
@@ -175,7 +178,7 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
 
     if arm == A3L:
         register_all()
-        return _runtime(LLMPolicy(client, run_id=run_id), trace=trace)
+        return _runtime(LLMPolicy(client, run_id=run_id, trace=trace), trace=trace)
 
     # A4 / A4R 都带语义判官
     register_all(judge=judge or LLMJudge(client=client, run_id=run_id))
@@ -183,7 +186,7 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
         ToolRegistry.register(make_rewrite_segment(client, run_id=run_id))
         # 两次改写 + 每轮复检，工具调用数会明显高于 A4，预算同步放宽
         return _runtime(
-            LLMPolicy(client, run_id=run_id, allow_rewrite=True),
+            LLMPolicy(client, run_id=run_id, allow_rewrite=True, trace=trace),
             budget=Budget(
                 max_iterations=20,
                 max_tool_calls=24,
@@ -193,7 +196,7 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
             trace=trace,
         )
 
-    return _runtime(LLMPolicy(client, run_id=run_id), trace=trace)
+    return _runtime(LLMPolicy(client, run_id=run_id, trace=trace), trace=trace)
 
 
 def _runtime(policy, budget: Optional[Budget] = None, trace: Any = None):
@@ -340,6 +343,18 @@ def run_arm(
             # 检出过问题、改写后复检通过：这才是"修复"，不是"回退"
             row["repaired"] = row.get("repaired", 0) + 1
             result.repaired += 1
+            # 自动"修复通过"不等于语义正确，留原始对照给人工抽检
+            result.samples.append({
+                "key": dialogue_key(record["dialogue"]),
+                "type": dtype,
+                "status": r.status,
+                "reason": r.reason,
+                "seen_issues": list(r.seen_issues),
+                "issues": list(r.issues),
+                "reference": reference,
+                "input": record["dialogue"],
+                "final": r.dialogue,
+            })
 
     for dialogue in base:
         result.clean_total += 1
@@ -596,6 +611,8 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
     ap.add_argument("--trace", default="",
                     help="决策链 JSONL 输出路径；用于定位 policy_error / 循环等失败原因")
+    ap.add_argument("--review", default="",
+                    help="人工抽检清单（Markdown）输出路径；只导出 repaired 样本")
     args = ap.parse_args(argv)
 
     if not args.arm and not args.compare:
@@ -722,6 +739,11 @@ def main(argv=None) -> int:
         print(f"[OK] {args.arm} -> {out}")
     else:
         print(text)
+
+    if args.review:
+        review = write_review_markdown(args.review, result.samples,
+                                       arm=args.arm, generated_at=stamp)
+        print(f"[OK] 抽检清单 -> {review}")
     return 0
 
 

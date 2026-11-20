@@ -171,3 +171,30 @@ class TestLoad:
         (tmp_path / "ablation_A4.raw.json").write_text("{}", encoding="utf-8")
         names = [p.name for p in _collect_results(tmp_path)]
         assert names == ["ablation_A4.json"]
+
+    def test_write_review_markdown(self, tmp_path):
+        from agent.benchmark.report import write_review_markdown
+
+        rows = [{
+            "key": "k1", "type": "D4_role_confusion", "status": "accepted",
+            "reason": "复检通过",
+            "seen_issues": [{"rule": "C3_off_topic", "detail": "角色错位"}],
+            "reference": {"messages": [{"role": "user", "content": "原问题"}]},
+            "input": {"messages": [{"role": "assistant", "content": "错误回答"}]},
+            "final": {"messages": [{"role": "assistant", "content": "改写回答"}]},
+        }]
+        out = write_review_markdown(tmp_path / "review.md", rows,
+                                    arm="A4R", generated_at="2026-11-20 10:00")
+        text = out.read_text(encoding="utf-8")
+
+        # 必须能定位到人：样本 key、缺陷类型、三份对照
+        assert "D4 角色混淆" in text
+        assert "k1" in text
+        assert "干净参照" in text and "缺陷版" in text and "最终版" in text
+        assert "假修复请单独计数" in text
+
+    def test_write_review_markdown_without_repairs(self, tmp_path):
+        from agent.benchmark.report import write_review_markdown
+
+        out = write_review_markdown(tmp_path / "review.md", [], arm="A4R")
+        assert "本轮没有 repaired 样本" in out.read_text(encoding="utf-8")

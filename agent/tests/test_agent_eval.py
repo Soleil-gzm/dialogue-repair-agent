@@ -243,6 +243,10 @@ class TestA4RRewriteClosedLoop:
         assert result.repair_rate() == 1.0
         assert result.per_type["D1_off_topic"]["blocked"] == 0
         assert result.clean_flagged == 0
+        # repaired 样本要留原始对照，供 --review 导出人工抽检
+        assert len(result.samples) == 1
+        assert result.samples[0]["type"] == "D1_off_topic"
+        assert result.samples[0]["key"]
 
 
 class TestA2Parsing:
