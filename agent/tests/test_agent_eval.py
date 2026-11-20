@@ -226,6 +226,13 @@ class TestSerialization:
         assert d["clean_intervention_rate"] == 0.0
         assert d["per_type"]["D1_off_topic"]["blocked"] == 20
 
+    def test_repair_rate_counts_only_detected(self):
+        """修复成功率分母是被标记数，不是样本总数（设计 L3）。"""
+        r = ArmResult(arm=A3R, repaired=2)
+        r.per_type = {"D4": {"total": 3, "detected": 2, "blocked": 1},
+                      "D5": {"total": 3, "detected": 2, "blocked": 1}}
+        assert r.repair_rate() == pytest.approx(0.5)
+
     def test_clean_failed_counts_as_intervention(self):
         """干净样本未跑完属于被干预，不能美化成未误报（R7）。"""
         r = ArmResult(arm=A3, clean_total=12, clean_flagged=0, clean_failed=4)

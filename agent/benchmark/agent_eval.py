@@ -81,6 +81,8 @@ class ArmResult:
     clean_flagged: int = 0
     # 干净样本未跑完（异常）：同样属于"被干预"，不得美化成未误报
     clean_failed: int = 0
+    # 检出后修复并复检通过的样本数（修复能力，区别于回退）
+    repaired: int = 0
     failed: int = 0
     # 因预算/墙钟触顶而中止的样本数：宿主机待机等环境噪声会让它变高，
     # 单独计数才能避免把"环境中断"误读成"模型没检出"
@@ -111,6 +113,11 @@ class ArmResult:
             return 0.0
         return round((self.clean_flagged + self.clean_failed) / self.clean_total, 4)
 
+    def repair_rate(self) -> float:
+        """修复成功率 = 修复通过数 / 被标记数（设计文档 L3，目标 ≥ 0.70）。"""
+        flagged = sum(r.get("detected", 0) for r in self.per_type.values())
+        return round(self.repaired / flagged, 4) if flagged else 0.0
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "arm": self.arm,
@@ -118,6 +125,8 @@ class ArmResult:
             "per_type": OrderedDict(sorted(self.per_type.items())),
             "macro_recall_blocked": self.macro_recall("blocked"),
             "macro_recall_detected": self.macro_recall("detected"),
+            "repaired": self.repaired,
+            "repair_rate": self.repair_rate(),
             "clean_total": self.clean_total,
             "clean_flagged": self.clean_flagged,
             "clean_failed": self.clean_failed,
@@ -308,6 +317,10 @@ def run_arm(
             row["detected"] += 1
         if r.status == "fallback":
             row["blocked"] += 1
+        elif r.status == "accepted" and r.seen_issues:
+            # 检出过问题、改写后复检通过：这才是"修复"，不是"回退"
+            row["repaired"] = row.get("repaired", 0) + 1
+            result.repaired += 1
 
     for dialogue in base:
         result.clean_total += 1
@@ -468,6 +481,7 @@ def _collect_outcomes(
 
     metric='blocked' → defect 样本返回 arm 是否 fallback；clean 样本返回 arm 是否没误报（True=好）
     metric='detected' → defect 样本返回 arm 是否检出；clean 样本同 blocked
+    metric='no_leak' → defect 样本返回缺陷是否未泄露（回退或修复通过）；clean 样本同 blocked
     metric='clean'   → 只跑 clean 样本，返回是否没被标记
 
     """
@@ -486,6 +500,12 @@ def _collect_outcomes(
         r = runtime.run(record["dialogue"], reference=reference)
         if metric == "detected":
             outcomes.append(bool(r.issues or r.seen_issues))
+        elif metric == "no_leak":
+            # 缺陷未泄露：回退原文，或修复后复检无遗留问题
+            outcomes.append(
+                r.status == "fallback"
+                or (r.status == "accepted" and not r.issues)
+            )
         else:  # blocked
             outcomes.append(r.status == "fallback")
 
@@ -515,11 +535,11 @@ def _collect_outcomes_a2(
 
     for record in defects:
         reference = base[record["base_index"]] if base else None
-        # pre-A2 违规 = reference 与 dialogue 不一致
-        pre_violations = (check_consistency(
-            before=reference or {}, after=record["dialogue"],
-        ) if reference else [])
-        outcomes.append(bool(pre_violations))
+        # A2 没有回退：只有改写后与干净参照一致，才算缺陷未泄露
+        r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_d")
+        fidelity = (check_consistency(before=reference, after=r["dialogue"])
+                    if reference else [])
+        outcomes.append(not r["parse_error"] and not fidelity)
 
     for dialogue in base:
         r = run_a2_dialogue(client, dialogue, run_id=run_id + "_c")
@@ -545,7 +565,7 @@ def main(argv=None) -> int:
                     help="L3 跨臂对比：\"A3,A2\" 或 \"A4,A3L\" 格式")
     ap.add_argument("--live", action="store_true", help="在线臂：需要 .env 中的密钥")
     ap.add_argument("--limit", type=int, default=0, help="每类最多取 N 条（调试用）")
-    ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean"],
+    ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean", "no_leak"],
                     help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
     ap.add_argument("--trace", default="",
