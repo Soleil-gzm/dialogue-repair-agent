@@ -32,9 +32,10 @@ def _strip_inline_comment(val: str) -> str:
     """
     if not val:
         return val
-    # KEY=   # 注释 → 正则吃掉空白后恰好以 # 开头，等价于留空
+    # KEY=   # 注释 → 正则吃掉空白后以 "# " 开头，等价于留空；
+    # 而 "#fff" 这种紧跟非空白的值仍按值处理
     if val.startswith("#"):
-        return ""
+        return "" if len(val) == 1 or val[1].isspace() else val
     if val[0] in "\"'":
         end = val.find(val[0], 1)
         if end != -1:
