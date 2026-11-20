@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..eval.coherence import check_coherence
 from ..eval.judge import JUDGE_VERSION, RUBRIC_VERSION, LLMJudge
 from ..eval.rules import RULES_VERSION, check_consistency
 from ..runtime.budget import Budget
@@ -493,6 +494,12 @@ def _collect_outcomes(
                                      ledger=ledger, metric=metric)
 
     runtime = build_runtime(arm, client=client, run_id=run_id, trace=trace)
+    # no_leak 用独立评估器复检最终输出，不采信 agent 自身的校验结论
+    leak_judge = None
+    if metric == "no_leak" and client is not None:
+        from ..eval.judge import LLMJudge
+
+        leak_judge = LLMJudge(client=client, run_id=f"{run_id}_leak")
 
     # defect samples
     for record in defects:
@@ -501,11 +508,12 @@ def _collect_outcomes(
         if metric == "detected":
             outcomes.append(bool(r.issues or r.seen_issues))
         elif metric == "no_leak":
-            # 缺陷未泄露：回退原文，或修复后复检无遗留问题
-            outcomes.append(
-                r.status == "fallback"
-                or (r.status == "accepted" and not r.issues)
-            )
+            # 缺陷未泄露：独立复检最终输出
+            # 结构/实体看规则对比，重复空转/空回复看连贯性规则，D1 看判官
+            violations = (check_consistency(before=reference, after=r.dialogue)
+                          if reference else [])
+            violations += check_coherence(r.dialogue, judge=leak_judge)
+            outcomes.append(not violations)
         else:  # blocked
             outcomes.append(r.status == "fallback")
 
