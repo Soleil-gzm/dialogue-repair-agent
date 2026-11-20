@@ -96,3 +96,23 @@ class TestStageRouting:
         assert c.generate_client.settings.model == "gen"
         assert c.judge_client.settings.model == "judge-model"
         assert c.judge_client.settings.temperature == 0.0
+
+    def test_judge_api_key_can_differ(self):
+        """生成走本地、判官走商用 API 时，两侧密钥必须能分开。"""
+        from agent.runtime.deepseek import build_stage_clients
+
+        env = {"DEEPSEEK_API_KEY": "ollama", "DEEPSEEK_MODEL": "local-model",
+               "DEEPSEEK_BASE_URL": "http://localhost:11434/v1",
+               "JUDGE_MODEL": "deepseek-chat",
+               "JUDGE_BASE_URL": "https://api.deepseek.com",
+               "JUDGE_API_KEY": "sk-judge"}
+        c = build_stage_clients(environ=env)
+        assert c.generate_client.api_key == "ollama"
+        assert c.judge_client.api_key == "sk-judge"
+
+    def test_judge_api_key_falls_back_to_generate_key(self):
+        from agent.runtime.deepseek import build_stage_clients
+
+        env = {"DEEPSEEK_API_KEY": "sk-shared", "JUDGE_MODEL": "judge-model"}
+        c = build_stage_clients(environ=env)
+        assert c.judge_client.api_key == "sk-shared"

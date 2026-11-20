@@ -11,6 +11,7 @@
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -317,6 +318,9 @@ def build_stage_clients(environ=None, ledger: Optional[TokenLedger] = None,
     judge_cfg = judge_settings(environ)
     # 从同一个 environ 解析密钥，缺失时在这里明确失败一次
     api_key = gen_settings.api_key(environ)
+    # 判官可独立配密钥：生成走 Ollama、判官走商用 API 时必须分开
+    env = os.environ if environ is None else environ
+    judge_api_key = (env.get("JUDGE_API_KEY") or "").strip() or api_key
     # 计费策略：LLM_PRICE_TABLE=local 时单价为 0，token 照记
     pricing = pricing_policy(environ)
     generate = DeepSeekClient(
@@ -324,7 +328,7 @@ def build_stage_clients(environ=None, ledger: Optional[TokenLedger] = None,
         pricing=pricing, transport=transport,
     )
     judge = DeepSeekClient(
-        settings=judge_cfg, api_key=api_key, ledger=ledger,
+        settings=judge_cfg, api_key=judge_api_key, ledger=ledger,
         pricing=pricing, transport=transport,
     )
     return StageRoutedClient(generate, judge)
