@@ -20,6 +20,7 @@ from agent.runtime.loop import (
 )
 from agent.runtime.policy import ACTION_CALL_TOOL, ACTION_STOP, Decision, RulePolicy
 from agent.runtime.registry import FunctionTool, ToolRegistry
+from agent.runtime.state import AgentState
 from agent.runtime.trace import TraceWriter
 from agent.tools import register_all
 
@@ -43,6 +44,14 @@ class _RaisingPolicy:
 
 
 class TestHappyPath:
+    def test_state_key_stable_across_rewrite(self, mini_dialogues):
+        """改写会换掉 dialogue，但样本标识必须固定，账本与 Trace 才能按样本聚合。"""
+        state = AgentState(dialogue=mini_dialogues[0], original=mini_dialogues[0],
+                           budget=Budget())
+        before = state.key
+        state.dialogue = copy.deepcopy(mini_dialogues[1])
+        assert state.key == before
+
     def test_clean_dialogue_accepted(self, mini_dialogues):
         r = AgentRuntime(RulePolicy()).run(mini_dialogues[0])
         assert r.status == ACCEPTED

@@ -36,6 +36,12 @@ class AgentState:
     # 策略自报的 token 用量：由循环在决策后入账，避免"模型调用不占预算"
     _pending_tokens: int = 0
 
+    # 样本标识在构造时固定：改写会换掉 dialogue，但账本/Trace 必须按同一样本聚合
+    _key: str = field(default="", repr=False)
+
+    def __post_init__(self) -> None:
+        self._key = dialogue_key(self.dialogue)
+
     def add_tokens(self, n: int) -> None:
         """记录一次模型调用消耗的 token（失败调用也应计，成本口径才不漏）。"""
         try:
@@ -52,8 +58,8 @@ class AgentState:
 
     @property
     def key(self) -> str:
-        """以候选内容为键：同一份原始数据的不同候选应各自独立。"""
-        return dialogue_key(self.dialogue)
+        """以候选内容为键（构造时固定）：同一份原始数据的不同候选各自独立。"""
+        return self._key
 
     def called_tools(self) -> set:
         return {h.get("tool") for h in self.history}
