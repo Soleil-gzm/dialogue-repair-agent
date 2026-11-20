@@ -122,7 +122,7 @@ agent/
 │   ├── fixtures.py       中立域程序化数据生成 + dev/test 分层切分
 │   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
 │   ├── run.py            基线 CLI（A0 与 lock 校验）
-│   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A3R/A4：召回 / 误报 / 成本）
+│   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A3R/A4/A4R：召回 / 误报 / 成本）
 │   ├── report.py         作品集报告生成（三件套 + SVG，纯标准库）
 │   ├── baseline/         入库：冻结的基线
 │   └── output/           不入库：运行产物

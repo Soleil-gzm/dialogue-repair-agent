@@ -40,7 +40,7 @@ python -m agent.benchmark.run \
   --input agent/fixtures/public/base_v1.json \
   --arms A0 --verify-arm A0
 
-# Agent 臂评测（A3 离线；A3L/A3R/A4 需 --live 与密钥）
+# Agent 臂评测（A3 离线；A3L/A3R/A4/A4R 需 --live 与密钥）
 python -m agent.benchmark.agent_eval --arm A3 --out agent/benchmark/output/ablation_A3.json
 python -m agent.benchmark.agent_eval --arm A3R --live --out agent/benchmark/output/ablation_A3R.json
 
