@@ -123,7 +123,7 @@ class ArmResult:
 
 
 def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
-                  run_id: str = "ablation"):
+                  run_id: str = "ablation", trace: Any = None):
     """按臂装配运行时；会先清空工具注册表，避免跨臂污染。"""
     if arm not in ARMS:
         raise ValueError(f"未知臂: {arm}（可选 {ARMS}）")
@@ -132,7 +132,7 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
 
     if arm == A3:
         register_all()
-        return _runtime(RulePolicy())
+        return _runtime(RulePolicy(), trace=trace)
 
     if client is None:
         raise ValueError(f"臂 {arm} 需要注入 LLMClient")
@@ -148,6 +148,7 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
                 max_tokens=20000,
                 max_wall_clock_s=300.0,
             ),
+            trace=trace,
         )
 
     if arm == A3L:
@@ -155,13 +156,13 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
     else:
         register_all(judge=judge or LLMJudge(client=client, run_id=run_id))
 
-    return _runtime(LLMPolicy(client, run_id=run_id))
+    return _runtime(LLMPolicy(client, run_id=run_id), trace=trace)
 
 
-def _runtime(policy, budget: Optional[Budget] = None):
+def _runtime(policy, budget: Optional[Budget] = None, trace: Any = None):
     from ..runtime.loop import AgentRuntime
 
-    return AgentRuntime(policy, budget=budget)
+    return AgentRuntime(policy, budget=budget, trace=trace)
 
 
 # --------------------------------------------------------------------------
@@ -255,6 +256,7 @@ def run_arm(
     judge: Any = None,
     run_id: str = "ablation",
     ledger: Any = None,
+    trace: Any = None,
 ) -> ArmResult:
     """跑一个臂，返回聚合指标。
 
@@ -262,6 +264,7 @@ def run_arm(
         base: 干净对话列表（回退参照与误报测量都用它）
         defects: 缺陷记录，形如 {"dialogue", "defect": {"type": ...}, "base_index"}
         ledger: 可选 TokenLedger，用于取真实成本
+        trace: 可选 TraceWriter，落盘决策链（A2 无循环，不使用）
     """
     # 账本按臂归集：每次运行前把当前臂名注入客户端（含路由客户端的两个子客户端）
     for c in (client, judge):
@@ -273,7 +276,7 @@ def run_arm(
         return _run_a2(base, defects, client=client, run_id=run_id, ledger=ledger)
 
     started = time.monotonic()
-    runtime = build_runtime(arm, client=client, judge=judge, run_id=run_id)
+    runtime = build_runtime(arm, client=client, judge=judge, run_id=run_id, trace=trace)
     result = ArmResult(arm=arm)
     tokens_before = ledger.total_tokens() if ledger else 0
     cost_before = ledger.total_cost() if ledger else 0.0
@@ -388,6 +391,7 @@ def compare_arms(
     run_id: str = "compare",
     ledger: Any = None,
     metric: str = "blocked",
+    trace: Any = None,
 ) -> Dict[str, Any]:
     """对比两个臂在同一数据上的 L3 统计。
 
@@ -400,11 +404,11 @@ def compare_arms(
     # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
     outcomes_a = _collect_outcomes(
         arm_a, base, defects, client=client, run_id=f"{run_id}_{arm_a}",
-        ledger=ledger, metric=metric,
+        ledger=ledger, metric=metric, trace=trace,
     )
     outcomes_b = _collect_outcomes(
         arm_b, base, defects, client=client, run_id=f"{run_id}_{arm_b}",
-        ledger=ledger, metric=metric,
+        ledger=ledger, metric=metric, trace=trace,
     )
 
     # 两边长度一致（同一数据），outcomes 顺序 = defects + base
@@ -446,6 +450,7 @@ def _collect_outcomes(
     run_id: str,
     ledger: Any,
     metric: str,
+    trace: Any = None,
 ) -> List[bool]:
     """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome。
 
@@ -461,7 +466,7 @@ def _collect_outcomes(
         return _collect_outcomes_a2(base, defects, client=client, run_id=run_id,
                                      ledger=ledger, metric=metric)
 
-    runtime = build_runtime(arm, client=client, run_id=run_id)
+    runtime = build_runtime(arm, client=client, run_id=run_id, trace=trace)
 
     # defect samples
     for record in defects:
@@ -529,6 +534,8 @@ def main(argv=None) -> int:
     ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean"],
                     help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
+    ap.add_argument("--trace", default="",
+                    help="决策链 JSONL 输出路径；用于定位 policy_error / 循环等失败原因")
     args = ap.parse_args(argv)
 
     if not args.arm and not args.compare:
@@ -581,6 +588,11 @@ def main(argv=None) -> int:
 
     # 每次运行的账本标识必须唯一，否则多次尝试会混进同一 run_id
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    trace = None
+    if args.trace:
+        from ..runtime.trace import TraceWriter
+
+        trace = TraceWriter(args.trace)
 
     if args.compare:
         arm_a, arm_b = [s.strip() for s in args.compare.split(",")]
@@ -590,9 +602,11 @@ def main(argv=None) -> int:
                 return 2
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
-                               ledger=ledger, metric=args.metric)
+                               ledger=ledger, metric=args.metric, trace=trace)
         if ledger:
             ledger.close()
+        if trace:
+            trace.close()
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(payload.get("wilson_interpretation", ""))
         print(f"  p={payload['mcnemar']['p_value']} ({payload['mcnemar']['method']}), "
@@ -608,9 +622,11 @@ def main(argv=None) -> int:
 
     # 单臂评测路径
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
-                     run_id=f"ablation_{args.arm}_{stamp}")
+                     run_id=f"ablation_{args.arm}_{stamp}", trace=trace)
     if ledger:
         ledger.close()
+    if trace:
+        trace.close()
 
     payload = result.to_dict()
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）

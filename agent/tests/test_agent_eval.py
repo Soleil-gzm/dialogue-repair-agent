@@ -3,6 +3,8 @@
 只验证"指标怎么算"，不验证模型好坏；真实数值由 benchmark 运行产出。
 """
 
+import json
+
 import pytest
 
 from agent.benchmark.agent_eval import (
@@ -10,6 +12,7 @@ from agent.benchmark.agent_eval import (
 )
 from agent.benchmark.defects import generate
 from agent.runtime.llm import FakeLLMClient, LLMResponse
+from agent.runtime.trace import TraceWriter
 
 
 class _CyclicClient:
@@ -54,6 +57,18 @@ class TestBuildRuntime:
     def test_unknown_arm(self):
         with pytest.raises(ValueError):
             build_runtime("A9")
+
+
+class TestTrace:
+    def test_run_arm_persists_decision_trace(self, dataset, tmp_path):
+        """失败对话必须能留下原因，否则 failed 计数无法归因。"""
+        base, defects = dataset
+        path = tmp_path / "trace.jsonl"
+        run_arm(A3, base, defects[:1], trace=TraceWriter(path))
+
+        events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        assert any(e["event"] == "start" for e in events)
+        assert any(e["event"] == "end" for e in events)
 
 
 class TestRuleArm:
