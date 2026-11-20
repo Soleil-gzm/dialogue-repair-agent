@@ -6,6 +6,7 @@
 README.md
 .gitignore
 __init__.py
+canonical.py
 benchmark/__init__.py
 benchmark/canonical.py
 benchmark/fingerprint.py
@@ -13,6 +14,7 @@ benchmark/lock.py
 benchmark/arms.py
 benchmark/fixtures.py
 benchmark/defects.py
+benchmark/l3_stats.py
 benchmark/run.py
 benchmark/agent_eval.py
 benchmark/manifest.py
@@ -123,4 +125,3 @@ docs/archive/private/Agent化改造总纲与Benchmark方案.md
 docs/archive/private/Agent化技术评估与落地方案.md
 docs/archive/private/数据策略评估与决策.md
 docs/archive/private/数据格式适配与兼容规范.md
-benchmark/l3_stats.py
