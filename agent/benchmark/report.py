@@ -117,8 +117,8 @@ def _conclusions(arms: List[Dict[str, Any]], recall: Dict[str, Dict[str, float]]
     for arm in arms:
         if arm.get("clean_total"):
             out.append(
-                f"{arm['arm']} 干净样本误报 {arm.get('clean_flagged', 0)}/"
-                f"{arm['clean_total']}（{arm.get('clean_fp_rate', 0):.1%}）。")
+                f"{arm['arm']} 干净样本干预 {arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}"
+                f"/{arm['clean_total']}（{arm.get('clean_intervention_rate', 0):.1%}）。")
         if arm.get("stopped"):
             out.append(
                 f"{arm['arm']} 有 {arm['stopped']} 条样本因预算/墙钟中止，"
@@ -326,7 +326,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
                  for t in defects]
         rows.append(
             f"| {arm['arm']} | " + " | ".join(cells)
-            + f" | {arm.get('clean_flagged', 0)}/{arm.get('clean_total', 0)}"
+            + f" | {arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}/{arm.get('clean_total', 0)}"
             + f" | {arm.get('macro_recall_blocked', 0):.1%}"
             + f" | {arm.get('tokens', 0):,}"
             + f" | ¥{arm.get('cost_cny', 0):.2f} |")
@@ -336,7 +336,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
         "",
         f"- 缺陷集：{meta['dataset']['n_defects']} 条（{len(defects)} 类 × "
         f"{meta['dataset']['per_type']}），干净样本 {meta['dataset']['n_clean']} 条",
-        "- 指标：`blocked` = 检出并回退原文；`误报` = 干净样本被误判回退",
+        "- 指标：`blocked` = 检出并回退原文；`干净样本干预率` = 干净样本被回退或异常中断的占比",
         "- 数据与成本均来自 append-only token 账本",
         "",
         *head, *rows,
@@ -383,7 +383,7 @@ def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: s
         body_rows.append(
             f"<tr><td><b>{html_escape(arm['arm'])}</b><br><span class='muted'>"
             f"{html_escape(arm.get('description', ''))}</span></td>{cells}"
-            f"<td>{arm.get('clean_flagged', 0)}/{arm.get('clean_total', 0)}</td>"
+            f"<td>{arm.get('clean_flagged', 0) + arm.get('clean_failed', 0)}/{arm.get('clean_total', 0)}</td>"
             f"<td>{arm.get('macro_recall_blocked', 0):.1%}</td>"
             f"<td>{arm.get('tokens', 0):,}</td><td>¥{arm.get('cost_cny', 0):.2f}</td></tr>")
 

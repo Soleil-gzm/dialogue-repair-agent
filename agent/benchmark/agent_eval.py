@@ -1,6 +1,6 @@
 """Agent 臂评测（A2 / A3 / A3L / A3R / A4）
 
-在同一缺陷集上跑**完整决策循环**，产出每类缺陷的检出率、阻断率、干净样本误报与成本。
+在同一缺陷集上跑**完整决策循环**，产出每类缺陷的检出率、阻断率、干净样本干预率与成本。
 
 五个臂，按单变量原则逐层加因子：
 
@@ -79,6 +79,8 @@ class ArmResult:
     per_type: Dict[str, Dict[str, int]] = field(default_factory=dict)
     clean_total: int = 0
     clean_flagged: int = 0
+    # 干净样本未跑完（异常）：同样属于"被干预"，不得美化成未误报
+    clean_failed: int = 0
     failed: int = 0
     # 因预算/墙钟触顶而中止的样本数：宿主机待机等环境噪声会让它变高，
     # 单独计数才能避免把"环境中断"误读成"模型没检出"
@@ -100,8 +102,14 @@ class ArmResult:
             return 0.0
         return round(sum(r.get(key, 0) / r["total"] for r in rows) / len(rows), 4)
 
-    def clean_fp_rate(self) -> float:
-        return round(self.clean_flagged / self.clean_total, 4) if self.clean_total else 0.0
+    def clean_intervention_rate(self) -> float:
+        """干净样本干预率：被回退或被异常中断的干净样本占比。
+
+        未跑完的样本按"被干预"计，避免失败样本被美化成"没误伤"（R7）。
+        """
+        if not self.clean_total:
+            return 0.0
+        return round((self.clean_flagged + self.clean_failed) / self.clean_total, 4)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -112,7 +120,8 @@ class ArmResult:
             "macro_recall_detected": self.macro_recall("detected"),
             "clean_total": self.clean_total,
             "clean_flagged": self.clean_flagged,
-            "clean_fp_rate": self.clean_fp_rate(),
+            "clean_failed": self.clean_failed,
+            "clean_intervention_rate": self.clean_intervention_rate(),
             "failed": self.failed,
             "stopped": self.stopped,
             "tokens": self.tokens,
@@ -310,6 +319,8 @@ def run_arm(
             result.stopped += 1
         if r.status == "fallback":
             result.clean_flagged += 1
+        elif r.status == "failed":
+            result.clean_failed += 1
 
     if ledger:
         result.tokens = ledger.total_tokens() - tokens_before
@@ -362,6 +373,7 @@ def _run_a2(
 
         if r["parse_error"]:
             result.failed += 1
+            result.clean_failed += 1
             continue
         # 干净样本被 A2 改坏：post-A2 与原文的一致性校验失败
         fidelity = check_consistency(before=dialogue, after=r["dialogue"])
@@ -480,9 +492,11 @@ def _collect_outcomes(
     # clean samples
     for dialogue in base:
         r = runtime.run(dialogue)
-        # clean 样本：metric='blocked'/'detected' 都看"没被标记"
-        # 即 agent 没误报（status != fallback，也没有 issues）
-        outcomes.append(r.status != "fallback" and not r.issues)
+        # clean 样本：metric='blocked'/'detected' 都看"没被干预"
+        # 被回退、异常中断或报出 issues 都算干预（失败不得美化成未误报）
+        outcomes.append(
+            r.status not in ("fallback", "failed") and not r.issues
+        )
 
     return outcomes
 

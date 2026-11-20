@@ -104,7 +104,7 @@ class TestRuleArm:
         result = run_arm(A3, base, defects)
         assert result.clean_total == len(base)
         assert result.clean_flagged == 0
-        assert result.clean_fp_rate() == 0.0
+        assert result.clean_intervention_rate() == 0.0
 
     def test_rule_arm_spends_no_tokens(self, dataset):
         base, defects = dataset
@@ -223,8 +223,14 @@ class TestSerialization:
         d = r.to_dict()
         assert d["arm"] == A3
         assert d["macro_recall_blocked"] == 1.0
-        assert d["clean_fp_rate"] == 0.0
+        assert d["clean_intervention_rate"] == 0.0
         assert d["per_type"]["D1_off_topic"]["blocked"] == 20
+
+    def test_clean_failed_counts_as_intervention(self):
+        """干净样本未跑完属于被干预，不能美化成未误报（R7）。"""
+        r = ArmResult(arm=A3, clean_total=12, clean_flagged=0, clean_failed=4)
+        assert r.clean_intervention_rate() == pytest.approx(0.3333, abs=1e-4)
+        assert r.to_dict()["clean_failed"] == 4
 
     def test_macro_recall_averages_types(self):
         r = ArmResult(arm=A3, per_type={
@@ -237,4 +243,4 @@ class TestSerialization:
     def test_empty_result_is_zero_not_crash(self):
         r = ArmResult(arm=A3)
         assert r.macro_recall() == 0.0
-        assert r.clean_fp_rate() == 0.0
+        assert r.clean_intervention_rate() == 0.0

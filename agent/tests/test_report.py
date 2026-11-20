@@ -21,7 +21,8 @@ def _arm(name, blocked=20, total=20, cost=0.0, tokens=0, clean=12, flagged=0, st
         "macro_recall_blocked": round(
             sum(r["blocked"] / r["total"] for r in per.values()) / len(per), 4),
         "clean_total": clean, "clean_flagged": flagged,
-        "clean_fp_rate": round(flagged / clean, 4) if clean else 0.0,
+        "clean_failed": 0,
+        "clean_intervention_rate": round(flagged / clean, 4) if clean else 0.0,
         "failed": 0, "stopped": stopped,
         "tokens": tokens, "calls": 0, "cost_cny": cost, "elapsed_s": 0.0,
     }
@@ -56,7 +57,7 @@ class TestSummarize:
         text = " ".join(report["conclusions"])
         assert "A3 → A3L" in text and "没有带来增量" in text
         assert "A3L → A4" in text
-        assert "误报" in text
+        assert "干净样本干预" in text
 
     def test_stopped_is_called_out(self):
         arms = _arms()
