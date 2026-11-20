@@ -184,6 +184,7 @@ MAX_ISSUES_IN_PROMPT = 8
 MAX_REASON_CHARS = 200
 # 允许改写时的单对话重写上限：两次仍不通过就回退，避免空转烧 token
 MAX_REWRITES = 2
+CHECK_TOOLS = ("check_consistency", "check_coherence")
 
 
 class LLMPolicy:
@@ -198,12 +199,14 @@ class LLMPolicy:
                  tools: Optional[Sequence[str]] = None,
                  max_tokens: int = 1024,
                  run_id: str = "adhoc",
-                 allow_rewrite: bool = False):
+                 allow_rewrite: bool = False,
+                 trace: Any = None):
         self.client = client
         self.tools = tuple(tools) if tools else None
         self.max_tokens = max_tokens
         self.run_id = run_id
         self.allow_rewrite = allow_rewrite
+        self.trace = trace
         self.system_prompt = REWRITE_SYSTEM_PROMPT if allow_rewrite else SYSTEM_PROMPT
 
     def decide(self, state: Any) -> Decision:
@@ -226,6 +229,15 @@ class LLMPolicy:
                 raise LLMPolicyError(f"模型选择了未注册的工具: {name!r}")
             if name in state.called_tools():
                 if not self._repeat_allowed(name, state):
+                    # 收尾闸门（b）：两项校验已在当前版本通过，再调校验拿不到新信息，
+                    # 按"绕圈"结束，而不是记成 failed（信号仍留在 trace）
+                    if name in CHECK_TOOLS and self._checks_satisfied(state):
+                        self._trace({"event": "redundant_check",
+                                     "key": state.key, "tool": name})
+                        return Decision(
+                            ACTION_STOP,
+                            "当前版本两项校验均已通过，忽略重复校验并结束",
+                        )
                     raise LLMPolicyError(f"模型重复调用工具: {name}")
             # 改写定位不到轮次时改走回退，而不是让整条样本 failed
             if name == "rewrite_segment" and RulePolicy._target_turn(state) is None:
@@ -243,9 +255,38 @@ class LLMPolicy:
         reason = (resp.text or "").strip()
         if not reason:
             raise LLMPolicyError("模型既没有调用工具，也没有给出结束理由")
+        # 收尾闸门（a）：还有未处理违规就结束，等于带病放行，强制转回退
+        if state.issues and "fallback_keep" in self._tool_names() \
+                and "fallback_keep" not in state.called_tools():
+            self._trace({"event": "guard_fallback", "key": state.key,
+                         "issues": len(state.issues)})
+            return Decision(
+                ACTION_CALL_TOOL, "fallback_keep",
+                {"original": state.original},
+                f"仍有 {len(state.issues)} 处未处理违规，收尾闸门强制回退",
+            )
         return Decision(ACTION_STOP, reason=reason[:MAX_REASON_CHARS])
 
     # ------------------------------------------------------------------ 内部
+    def _trace(self, payload: Dict[str, Any]) -> None:
+        if self.trace is not None:
+            self.trace.write(payload)
+
+    def _checks_satisfied(self, state: Any) -> bool:
+        """当前对话版本上两个校验都跑过且都通过。"""
+        history = list(state.history or [])
+        if state.issues:
+            return False
+        last_rewrite = max(
+            (i for i, h in enumerate(history) if h.get("tool") == "rewrite_segment"),
+            default=-1,
+        )
+        passed = {
+            h.get("tool") for h in history[last_rewrite + 1:]
+            if h.get("tool") in CHECK_TOOLS and h.get("ok", True)
+        }
+        return passed == set(CHECK_TOOLS)
+
     def _repeat_allowed(self, name: str, state: Any) -> bool:
         """判定重复调用是否合法：只放行"状态已变、需要重看"的情形。
 

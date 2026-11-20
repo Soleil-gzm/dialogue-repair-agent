@@ -165,6 +165,32 @@ class TestContract:
                     {"tool": "rewrite_segment", "ok": False, "turn": 1},
                 ]))
 
+    def test_stop_with_unresolved_issues_forces_fallback(self, mini_dialogues):
+        """收尾闸门：模型想在有违规时结束，必须转成回退，不能带病放行。"""
+        d = mini_dialogues[0]
+        issues = [{"rule": "C3_off_topic", "detail": "跑题", "turn": 2}]
+        client = _StubClient({"text": "我觉得没问题"})
+        dec = LLMPolicy(client).decide(_state(d, issues=issues))
+        assert dec.action == "call_tool"
+        assert dec.tool == "fallback_keep"
+        assert dec.args == {"original": d}
+
+    def test_redundant_check_after_pass_stops(self, mini_dialogues):
+        """两项校验已在当前版本通过，再调校验按结束处理，并留 trace 信号。"""
+        from agent.runtime.trace import TraceWriter
+
+        trace = TraceWriter()
+        client = _StubClient(_call("check_consistency"))
+        dec = LLMPolicy(client, trace=trace).decide(_state(
+            mini_dialogues[0],
+            history=[
+                {"tool": "check_consistency", "ok": True},
+                {"tool": "check_coherence", "ok": True},
+            ],
+        ))
+        assert dec.action == "stop"
+        assert any(e["event"] == "redundant_check" for e in trace.records)
+
     def test_rewrite_does_not_unlock_other_tools(self, mini_dialogues):
         d = mini_dialogues[0]
         client = _StubClient(_call("check_consistency"))
