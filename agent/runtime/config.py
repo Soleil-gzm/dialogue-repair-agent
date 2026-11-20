@@ -24,8 +24,29 @@ class MissingCredentials(RuntimeError):
     """缺少 API 密钥。宁可启动即失败，也不要带着空 key 去请求。"""
 
 
+def _strip_inline_comment(val: str) -> str:
+    """去掉未加引号值末尾的 "# ..." 注释；引号内的 # 保留。
+
+    约定：只有在空白之后出现的 # 才算注释起点，
+    避免把 URL fragment 之外的合法值误伤（如颜色值 #fff 不加空白时保留）。
+    """
+    if not val:
+        return val
+    # KEY=   # 注释 → 正则吃掉空白后恰好以 # 开头，等价于留空
+    if val.startswith("#"):
+        return ""
+    if val[0] in "\"'":
+        end = val.find(val[0], 1)
+        if end != -1:
+            return val[1:end]
+    m = re.search(r"\s+#", val)
+    if m:
+        val = val[:m.start()]
+    return val.strip()
+
+
 def parse_dotenv(text: str) -> Dict[str, str]:
-    """解析 KEY=VALUE 行；忽略注释与空行，允许单双引号包裹。"""
+    """解析 KEY=VALUE 行；忽略注释与空行，允许单双引号包裹与行尾注释。"""
     out: Dict[str, str] = {}
     for raw in text.splitlines():
         line = raw.strip()
@@ -34,9 +55,7 @@ def parse_dotenv(text: str) -> Dict[str, str]:
         m = _ENV_LINE.match(line)
         if not m:
             continue
-        key, val = m.group(1), m.group(2).strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
-            val = val[1:-1]
+        key, val = m.group(1), _strip_inline_comment(m.group(2).strip())
         out[key] = val
     return out
 

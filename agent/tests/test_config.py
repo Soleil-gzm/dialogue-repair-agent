@@ -24,6 +24,23 @@ class TestParseDotenv:
     def test_keeps_empty_value(self):
         assert parse_dotenv("A=") == {"A": ""}
 
+    def test_strips_inline_comment(self):
+        text = 'MODEL=qwen2.5:14b    # 留空=沿用上游\nURL=http://localhost:11434/v1   # 注释\n'
+        assert parse_dotenv(text) == {
+            "MODEL": "qwen2.5:14b",
+            "URL": "http://localhost:11434/v1",
+        }
+
+    def test_inline_comment_leaves_empty_value_empty(self):
+        """留空的键不能被注释文本冒充成有效值。"""
+        assert parse_dotenv("JUDGE_API_KEY=     # 留空=沿用\n") == {"JUDGE_API_KEY": ""}
+
+    def test_quoted_value_keeps_hash(self):
+        assert parse_dotenv('A="x # y"   # 尾部注释\n') == {"A": "x # y"}
+
+    def test_hash_without_space_is_kept(self):
+        assert parse_dotenv("COLOR=#fff") == {"COLOR": "#fff"}
+
     def test_ignores_malformed_line(self):
         assert parse_dotenv("不是键值对") == {}
 
