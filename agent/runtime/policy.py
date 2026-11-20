@@ -187,6 +187,18 @@ MAX_REWRITES = 2
 CHECK_TOOLS = ("check_consistency", "check_coherence")
 
 
+def _rewrite_allowed_by_issues(state: Any) -> bool:
+    """改写安全门禁：D1/D5（C3/C1）可改写；R* 与 C0* 必须回退。
+
+    不 import eval 层常量，避免 runtime 反向依赖 eval；规则前缀是稳定性契约。
+    """
+    for issue in getattr(state, "issues", []) or []:
+        rule = str(issue.get("rule", ""))
+        if rule.startswith("R") or rule.startswith("C0"):
+            return False
+    return True
+
+
 class LLMPolicy:
     """function calling 决策策略：让模型选工具，与 RulePolicy 构成消融对照。
 
@@ -229,16 +241,22 @@ class LLMPolicy:
                 raise LLMPolicyError(f"模型选择了未注册的工具: {name!r}")
             if name in state.called_tools():
                 if not self._repeat_allowed(name, state):
-                    # 收尾闸门（b）：两项校验已在当前版本通过，再调校验拿不到新信息，
-                    # 按"绕圈"结束，而不是记成 failed（信号仍留在 trace）
+                    # 重复调用是策略违规，不得静默结束：结束会被误读成"模型自己收尾了"。
+                    # 记录 trace 后抛错，由 run_arm 计为 failed。
                     if name in CHECK_TOOLS and self._checks_satisfied(state):
                         self._trace({"event": "redundant_check",
                                      "key": state.key, "tool": name})
-                        return Decision(
-                            ACTION_STOP,
-                            "当前版本两项校验均已通过，忽略重复校验并结束",
-                        )
                     raise LLMPolicyError(f"模型重复调用工具: {name}")
+            # 代码门禁：结构性/实体/角色违规（R*）与输入契约/判官故障（C0*）
+            # 不允许改写，必须回退；只靠 prompt 约束不够可靠。
+            if name == "rewrite_segment" and not _rewrite_allowed_by_issues(state):
+                self._trace({"event": "guard_rewrite_blocked", "key": state.key,
+                             "issues": [i.get("rule") for i in state.issues]})
+                return Decision(
+                    ACTION_CALL_TOOL, "fallback_keep",
+                    {"original": state.original},
+                    "存在结构性/实体/角色违规，改写不安全，回退原文",
+                )
             # 改写定位不到轮次时改走回退，而不是让整条样本 failed
             if name == "rewrite_segment" and RulePolicy._target_turn(state) is None:
                 return Decision(

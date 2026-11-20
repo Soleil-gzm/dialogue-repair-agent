@@ -175,20 +175,20 @@ class TestContract:
         assert dec.tool == "fallback_keep"
         assert dec.args == {"original": d}
 
-    def test_redundant_check_after_pass_stops(self, mini_dialogues):
-        """两项校验已在当前版本通过，再调校验按结束处理，并留 trace 信号。"""
+    def test_redundant_check_after_pass_raises(self, mini_dialogues):
+        """两项校验已通过仍重复调用：按策略违规抛错，并留 trace 信号。"""
         from agent.runtime.trace import TraceWriter
 
         trace = TraceWriter()
         client = _StubClient(_call("check_consistency"))
-        dec = LLMPolicy(client, trace=trace).decide(_state(
-            mini_dialogues[0],
-            history=[
-                {"tool": "check_consistency", "ok": True},
-                {"tool": "check_coherence", "ok": True},
-            ],
-        ))
-        assert dec.action == "stop"
+        with pytest.raises(LLMPolicyError, match="重复调用"):
+            LLMPolicy(client, trace=trace).decide(_state(
+                mini_dialogues[0],
+                history=[
+                    {"tool": "check_consistency", "ok": True},
+                    {"tool": "check_coherence", "ok": True},
+                ],
+            ))
         assert any(e["event"] == "redundant_check" for e in trace.records)
 
     def test_rewrite_does_not_unlock_other_tools(self, mini_dialogues):
