@@ -81,7 +81,7 @@ python -m agent.benchmark.run \
 
 提交前人工核对：
 
-- 臂名只使用 `A0/A2/A3/A3L/A3R/A4/A5-RAG`（A1 已于 2026-11-19 移出主链），且每个臂标注实现状态；
+- 臂名只使用 `A0/A2/A3/A3L/A3R/A4/A4R/A5-RAG`（A1 已于 2026-11-19 移出主链），且每个臂标注实现状态；
 - fixture 规模为 `base 12 / dev 30 / test 50 / defects 120`；
 - CLI 参数与 [模块与接口说明](architecture/模块与接口说明.md) 一致；
 - 未实现能力（A2、L3、replay、checkpoint 批量接入、Docker、MCP、OTel、RAG 实现）不得写成已完成；

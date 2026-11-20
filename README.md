@@ -67,6 +67,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 | **A3L** | A3 的工具集 + LLM 决策 | 只换决策者是否值得 | ✅ |
 | **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 已实现，待 L3 复测 |
 | **A4** | A3L + 语义判官 | 判官是否值得 | ✅ 需在线密钥 |
+| **A4R** | A4 + `rewrite_segment` | LLM 决策拿到完整工具集后还能提多少 | ✅ 已实现，待评测 |
 
 > **A1 已移除**：它做的是上游 `05_augment` 加噪（语气词/同义替换/语序），与"语义检测 + 改写"不是同一个任务；
 > 产物是变体列表，`n_out ≠ n_in` 无法配对，且脱离上游环境不可复现。旧指纹归档在
@@ -189,6 +190,7 @@ python -m agent.benchmark.agent_eval --arm A3 --out agent/benchmark/output/ablat
 python -m agent.benchmark.agent_eval --arm A3L --live   # 需密钥，会消耗 token
 python -m agent.benchmark.agent_eval --arm A3R --live
 python -m agent.benchmark.agent_eval --arm A4  --live
+python -m agent.benchmark.agent_eval --arm A4R --live
 ```
 
 > 口径与溯源：下表为 120 条注入缺陷 + 12 条干净对话的单轮全量运行，成本来自 append-only ledger（高峰价）。
