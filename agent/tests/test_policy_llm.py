@@ -92,6 +92,17 @@ class TestDecide:
         dec = LLMPolicy(client).decide(_state(d))
         assert dec.args == {"original": d}
 
+    def test_rewrite_args_target_issue_turn(self, mini_dialogues):
+        """改写轮次由运行时按违规位置注入，模型不参与定位。"""
+        d = mini_dialogues[0]
+        turn = next(i for i, m in enumerate(d["messages"]) if m["role"] == "assistant")
+        issues = [{"rule": "C3_off_topic", "detail": "跑题", "turn": turn}]
+        client = _StubClient(_call("rewrite_segment"))
+        dec = LLMPolicy(client, tools=["rewrite_segment"], allow_rewrite=True).decide(
+            _state(d, issues=issues))
+        assert dec.tool == "rewrite_segment"
+        assert dec.args == {"dialogue": d, "turn": turn, "issues": issues}
+
     def test_reason_truncated(self, mini_dialogues):
         client = _StubClient({"text": "很长的理由" * 100})
         dec = LLMPolicy(client).decide(_state(mini_dialogues[0]))
@@ -109,6 +120,36 @@ class TestContract:
         client = _StubClient(_call("check_consistency"))
         with pytest.raises(LLMPolicyError, match="重复调用"):
             LLMPolicy(client).decide(
+                _state(d, history=[{"tool": "check_consistency", "ok": True}]))
+
+    def test_rewrite_may_repeat_once(self, mini_dialogues):
+        """改写允许第二次：修不好再改一次，是设计内的行为。"""
+        d = mini_dialogues[0]
+        turn = next(i for i, m in enumerate(d["messages"]) if m["role"] == "assistant")
+        issues = [{"rule": "C3_off_topic", "detail": "跑题", "turn": turn}]
+        client = _StubClient(_call("rewrite_segment"))
+        dec = LLMPolicy(client, tools=["rewrite_segment"], allow_rewrite=True).decide(
+            _state(d, issues=issues,
+                   history=[{"tool": "rewrite_segment", "ok": True, "turn": turn}]))
+        assert dec.tool == "rewrite_segment"
+
+    def test_rewrite_repeat_capped_at_two(self, mini_dialogues):
+        d = mini_dialogues[0]
+        turn = next(i for i, m in enumerate(d["messages"]) if m["role"] == "assistant")
+        issues = [{"rule": "C3_off_topic", "detail": "跑题", "turn": turn}]
+        client = _StubClient(_call("rewrite_segment"))
+        with pytest.raises(LLMPolicyError, match="重复调用"):
+            LLMPolicy(client, tools=["rewrite_segment"], allow_rewrite=True).decide(
+                _state(d, issues=issues, history=[
+                    {"tool": "rewrite_segment", "ok": True, "turn": turn},
+                    {"tool": "rewrite_segment", "ok": True, "turn": turn},
+                ]))
+
+    def test_rewrite_does_not_unlock_other_tools(self, mini_dialogues):
+        d = mini_dialogues[0]
+        client = _StubClient(_call("check_consistency"))
+        with pytest.raises(LLMPolicyError, match="重复调用"):
+            LLMPolicy(client, allow_rewrite=True).decide(
                 _state(d, history=[{"tool": "check_consistency", "ok": True}]))
 
     def test_empty_response_raises(self, mini_dialogues):
@@ -151,6 +192,13 @@ class TestRequestShape:
         user = client.calls[0]["messages"][1]["content"]
         assert "敏感内容" not in user
         assert "消息数" in user
+
+    def test_rewrite_prompt_mentions_rewrite(self, mini_dialogues):
+        """允许改写时必须换一套决策规则，否则模型根本不会选 rewrite_segment。"""
+        client = _StubClient({"text": "ok"})
+        LLMPolicy(client, allow_rewrite=True).decide(_state(mini_dialogues[0]))
+        system = client.calls[0]["messages"][0]["content"]
+        assert "rewrite_segment" in system
 
     def test_observation_lists_history_and_issues(self, mini_dialogues):
         d = mini_dialogues[0]

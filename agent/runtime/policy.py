@@ -164,8 +164,25 @@ SYSTEM_PROMPT = (
     "5. 每个工具最多调用一次。"
 )
 
+# 允许改写时的决策规则：能修就修，修不动才回退
+REWRITE_SYSTEM_PROMPT = (
+    "你是对话数据修复 Agent 的决策器。每一步只能做一件事：调用一个工具，或结束流程。\n"
+    "规则：\n"
+    "1. 先做保真校验，再做连贯性校验；两个校验都完成前不要回退。\n"
+    "2. 校验报出违规后，先判断能否靠改 assistant 措辞修复：\n"
+    "   - 答非所问（D1）、重复空转（D5）→ 调用 rewrite_segment 改写问题轮次；\n"
+    "   - 改写后必须重新跑两个校验，确认问题消失。\n"
+    "3. 涉及结构、实体、角色的问题（引用丢失、事实冲突、角色混淆、缺回复）无法靠改写措辞修复，"
+    "直接调用 fallback_keep。\n"
+    "4. 没有任何违规时结束流程（不要调用工具，直接给出简短理由）。\n"
+    "5. 工具入参由运行时注入，你只需要选择工具名，不要自己拼参数。\n"
+    "6. rewrite_segment 最多调用两次；两次后仍不通过就 fallback_keep。"
+)
+
 MAX_ISSUES_IN_PROMPT = 8
 MAX_REASON_CHARS = 200
+# 允许改写时的单对话重写上限：两次仍不通过就回退，避免空转烧 token
+MAX_REWRITES = 2
 
 
 class LLMPolicy:
@@ -179,15 +196,18 @@ class LLMPolicy:
     def __init__(self, client: Any, *,
                  tools: Optional[Sequence[str]] = None,
                  max_tokens: int = 1024,
-                 run_id: str = "adhoc"):
+                 run_id: str = "adhoc",
+                 allow_rewrite: bool = False):
         self.client = client
         self.tools = tuple(tools) if tools else None
         self.max_tokens = max_tokens
         self.run_id = run_id
+        self.allow_rewrite = allow_rewrite
+        self.system_prompt = REWRITE_SYSTEM_PROMPT if allow_rewrite else SYSTEM_PROMPT
 
     def decide(self, state: Any) -> Decision:
         resp = self.client.chat(
-            [{"role": "system", "content": SYSTEM_PROMPT},
+            [{"role": "system", "content": self.system_prompt},
              {"role": "user", "content": self.observe(state)}],
             temperature=0.0,
             max_tokens=self.max_tokens,
@@ -204,7 +224,21 @@ class LLMPolicy:
             if name not in self._tool_names():
                 raise LLMPolicyError(f"模型选择了未注册的工具: {name!r}")
             if name in state.called_tools():
-                raise LLMPolicyError(f"模型重复调用工具: {name}")
+                repeats = sum(1 for h in state.history if h.get("tool") == name)
+                repeated_rewrite = (
+                    self.allow_rewrite
+                    and name == "rewrite_segment"
+                    and repeats < MAX_REWRITES
+                )
+                if not repeated_rewrite:
+                    raise LLMPolicyError(f"模型重复调用工具: {name}")
+            # 改写定位不到轮次时改走回退，而不是让整条样本 failed
+            if name == "rewrite_segment" and RulePolicy._target_turn(state) is None:
+                return Decision(
+                    ACTION_CALL_TOOL, "fallback_keep",
+                    {"original": state.original},
+                    "违规无法定位到 assistant 轮次，回退原文",
+                )
             return Decision(
                 ACTION_CALL_TOOL, name,
                 self._build_args(name, state),
@@ -251,6 +285,15 @@ class LLMPolicy:
             return {"dialogue": state.dialogue}
         if tool == "fallback_keep":
             return {"original": state.original}
+        if tool == "rewrite_segment":
+            turn = RulePolicy._target_turn(state)
+            if turn is None:
+                raise LLMPolicyError("rewrite_segment 无法定位到 assistant 轮次")
+            return {
+                "dialogue": state.dialogue,
+                "turn": turn,
+                "issues": list(state.issues),
+            }
         raise LLMPolicyError(f"没有为工具 {tool} 定义入参构造规则")
 
     @staticmethod
