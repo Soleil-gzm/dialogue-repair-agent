@@ -26,11 +26,11 @@
 | 公开轨 `base/dev/test`、`defects` 生成 | 已实现 | `benchmark/fixtures.py`、`defects.py` |
 | A0 恒等臂 | 已实现 | `benchmark/arms.py`、`run.py` |
 | A1 规则增强臂 | 已移出主链（2026-11-19） | 归档 `benchmark/baseline/deprecated/a1_2026-11-19.json` |
-| A2 单次重写臂 | 未实现（S1b） | — |
+| A2 单次重写臂 | 已实现（`run_a2_dialogue`） | 全量结果见 `logs/agent/2026-11-20-full/` |
 | A3 / A3L / A3R / A4 | 已实现 | `benchmark/agent_eval.py` |
 | L1 规则、连贯性、语义判官 | 已实现 | `eval/rules.py`、`coherence.py`、`judge.py` |
 | L2 预算、Trace、死循环保护 | 已实现 | `runtime/budget.py`、`trace.py`、`loop.py` |
-| L3 胜率区间、McNemar、双盲、人工校准 | 未实现（S1b） | — |
+| L3 胜率区间、McNemar | 已实现（Wilson CI + 精确二项） | 双盲、人工校准仍未实现 |
 | 指纹、不可变锁、运行清单、ledger | 已实现 | `benchmark/fingerprint.py`、`lock.py`、`manifest.py`、`runtime/ledger.py` |
 | replay / cassette / checkpoint 批量接入 | 未实现（S1b） | — |
 | 报告三件套 + SVG | 已实现 | `benchmark/report.py` |
@@ -105,7 +105,7 @@
 | 臂 | 名称 | 输入 | 处理方式 | 回答的问题 | 实现状态 |
 |---|---|---|---|---|---|
 | **A0** | 原始基线 | 同一输入（默认 `base_v1.json`） | 不处理 | 下界。任何方法比它差都是失败 | 已实现 |
-| **A2** | 单次重写基线 | 同 A0 | 1 次 LLM 重写，无工具、无校验、无回退 | 隔离"工具循环"的贡献 | 未实现（S1b） |
+| **A2** | 单次重写基线 | 同 A0 | 1 次 LLM 重写，无工具、无校验、无回退 | 隔离"工具循环"的贡献 | 已实现 |
 | **A3** | Agent-rule（主方案） | 同 A0 | 工具循环 + 确定性策略 + 校验 + 回退 | 主方案是否成立 | 已实现 |
 | **A3L** | Agent-rule-LLM | 同 A0 | A3 的工具集，决策者换成 LLM function calling | 只换决策者的净收益 | 已实现 |
 | **A3R** | Agent-rule-repair | 同 A0 | A3 + `rewrite_segment` 多轮修复（检出→定位→重写→复检） | 修复工具相对只回退的净收益 | 已实现（S1a） |
@@ -122,8 +122,8 @@
 
 | 对比 | 唯一变量 | 可归因的结论 |
 |---|---|---|
-| A2 vs A0 | 是否引入 LLM 单次重写 | LLM 重写本身的净收益（A2 未实现，暂不可比） |
-| A3 vs A2 | 是否有"检查→校验→回退"闭环 | **工具循环的净收益（主结论）**（A2 未实现，暂不可比） |
+| A2 vs A0 | 是否引入 LLM 单次重写 | LLM 重写本身的净收益 |
+| A3 vs A2 | 是否有"检查→校验→回退"闭环 | **工具循环的净收益（主结论）** |
 | A3L vs A3 | 决策由规则还是模型做出 | 只换决策者的净收益 |
 | A4 vs A3L | 是否加入语义判官 | 判官的净收益 |
 | A3R vs A3 | 是否有"定位→重写→复检"修复闭环 | 修复工具相对只回退的净收益 |
@@ -261,7 +261,7 @@ python -m agent.benchmark.defects --per-type 20 --seed 20261113 \
 
 四层，**每层都必须给出「数据来源」**，否则指标不可复算。
 
-> 实现口径（Sprint 1a）：L1/L2 已有对应代码；L3 只有定义，统计与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95、缓存命中率、重复计费数尚未统计。
+> 实现口径（2026-11-20）：L1/L2 已有对应代码；L3 的 Wilson CI、精确 McNemar 与 `--compare` 已实现，双盲与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95 与缓存命中率尚未统计。
 
 ### 4.1 L1 能力层 —— 工具是否准确
 
@@ -285,7 +285,7 @@ python -m agent.benchmark.defects --per-type 20 --seed 20261113 \
 | 决策可解释率 | 含 `reason` 字段的决策 / 总决策 | = 1.00 |
 | 回退率 | `fallback_keep` 数 / 总数 | ≤ 0.10 |
 
-### 4.3 L3 效果层 —— 数据是否真的变好（设计目标，未实现）
+### 4.3 L3 效果层 —— 数据是否真的变好（基础统计已实现；双盲/人工未实现）
 
 | 指标 | 定义 | 门槛 | 备注 |
 |---|---|---|---|
@@ -578,7 +578,7 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | B1 | `agent/fixtures/public/` 三数据集 + 缺陷注入器 | 120 条缺陷，标签可复算 | ✅ 完成 |
 | B2 | E1 规则评估器 + 硬门禁 | 结构/实体/长度全部可判定 | ✅ 完成 |
 | B3 | run harness + `baseline_lock.json` | 离线 A0 可跑通 | ✅ 完成（A1 已于 2026-11-19 移出） |
-| B4 | A2/A3 接入 + ledger 汇总 | standard 档产出全指标 | ⬜ 部分：A3/A3L/A3R/A4 已接入；A2 未实现 |
+| B4 | A2/A3 接入 + ledger 汇总 | standard 档产出全指标 | ✅ A2/A3/A3L/A3R/A4/A4R 均已接入 |
 | B5 | E2 judge + 双向盲评 + 一致性校准 | κ ≥ 0.6，一致率 ≥ 75% | ⬜ 部分：单视角 D1 判官已实现；盲评与校准未做 |
 | B6 | 三件套报告 + 四张图 | 评审可离线一键复现 | ✅ 完成（SVG 四图） |
 | B7 | （可选）A4 Agent-llm | function calling 稳定后 | ✅ 完成 |
@@ -588,10 +588,10 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | 设计项 | 当前实现 | 差距 / 后续 |
 |---|---|---|
 | 四元组指纹 | 已实现，含规则与判官源码哈希 | 独立 adapter 模块未落地 |
-| A0/A3/A3L/A3R/A4 | 已实现（A1 已于 2026-11-19 移出主链） | A2 未实现 |
+| A0/A2/A3/A3L/A3R/A4/A4R | 已实现（A1 已于 2026-11-19 移出主链） | — |
 | L1 指标 | 规则、连贯性、D1 判官已实现 | 定位 P/R/F1 的完整统计未汇总 |
 | L2 指标 | 预算、死循环、Trace、回退已实现 | 无效调用率、可解释率未在报告汇总 |
-| L3 指标 | 仅定义 | 胜率、CI、McNemar、双盲、人工标注全部未实现 |
+| L3 指标 | 基础统计已实现 | 胜率、Wilson CI、精确 McNemar 已实现；双盲、人工标注未实现 |
 | L4 指标 | token、成本、指纹复现已实现 | P95、缓存命中率、重复计费数未统计 |
 | 报告产物 | 三件套 + 四张 SVG | 长表、显著性、账本汇总、trace 样例未生成 |
 | replay 档 | 未实现 | 无 cassette 机制 |

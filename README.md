@@ -8,14 +8,14 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 
 用 LLM Agent 修复模板拼接式对话的跨轮断裂问题，并用一套**可复现的评测体系**证明它有效。
 
-当前状态：`Sprint 0 ✅ / Sprint 1a ✅`（历史里程碑 M0–M5 均已完成）—— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、
+当前状态：`Sprint 0 ✅ / Sprint 1a ✅ / Sprint 1b 进行中`（M0–M4 完成，M5 作品集目录待补齐）—— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、
 五条保真约束 + `check_consistency`、连贯性检查 `check_coherence`（重复空转 / 退化轮次）、
 语义判官（D1 答非所问，可注入、prompt 版本化）、6 类程序化缺陷注入集、
 决策循环（预算 / 死循环保护 / Trace）与两种可消融的决策策略（规则型 / LLM function calling）、
 **可回退修复闭环**（`rewrite_segment` + A3R 多轮策略）、dev/test 分层切分、
 `generate` / `judge` 分侧路由，以及 DeepSeek 客户端（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
 
-下一步 Sprint 1b：A2 单次重写臂、L3 效果层统计、replay 与 checkpoint 批量接入。
+Sprint 1b 已完成 A2 单次重写臂与 L3 统计层（Wilson CI + 精确 McNemar）；剩余 replay 与 checkpoint 批量接入。
 完整设计见 [Agent 文档中心](agent/docs/README.md)。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。
@@ -62,7 +62,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 |---|---|---|---|
 | **A0** | 不处理 | 下界；任何方法比它差都是失败 | ✅ |
 | ~~A1~~ | 上游规则增强（加噪） | 已移出主链，仅作鲁棒性噪声源 | ⛔ 2026-11-19 移除 |
-| **A2** | 单次 LLM 重写 | "LLM 重写"本身值不值 | ⬜ 未实现（S1b） |
+| **A2** | 单次 LLM 重写 | "LLM 重写"本身值不值 | ✅ 已实现 |
 | **A3** | Agent 工具循环 + 规则决策 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
 | **A3L** | A3 的工具集 + LLM 决策 | 只换决策者是否值得 | ✅ |
 | **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 已实现，待 L3 复测 |
@@ -74,7 +74,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 > `agent/benchmark/baseline/deprecated/a1_2026-11-19.json`，原因见
 > [A1 臂移除记录](agent/docs/notes/2026-11-19-A1臂移除记录.md)。
 > 加噪能力转为鲁棒性实验的噪声源（同一 Agent 跑 clean vs noisy），不浪费。
-> A2 尚未实现，所以"A3 vs A2"的主结论仍需等 Sprint 1b。
+> A2 已实现；"A3 vs A2"的主结论以 `agent_eval --compare A3,A2` 的全量产物为准。
 
 ---
 
@@ -207,11 +207,16 @@ python -m agent.benchmark.agent_eval --arm A4R --live
 恢复后该条的墙钟预算触发中止（检出但未回退）；单独复跑该条为 blocked。
 评测器现在把这类预算中止计入独立的 `stopped` 字段，不会混进"模型没检出"。
 
-> **A3R 与 A2 的口径说明**
+> **指标口径说明（2026-11-20 修订）**
 >
-> - A3R 已实现，但当前评测器只把 `fallback` 计入 `blocked`，`rewrite_segment` 重写成功只计入 `detected`；
->   在口径统一（Sprint 1b）前，不把 A3R 数字与上表并列。
-> - A2 未实现，因此"A3 vs A2"的主结论仍待补测；上表只报告已完成的 A3/A3L/A4。
+> - `blocked` 只统计最终回退原文；`rewrite_segment` 修复成功计入 `detected` 与 `repaired`，
+>   不冒充"挡住并保住数据"。
+> - 干净样本干预率现在包含 `fallback`、`failed`、`stopped` 与"误报后改写成功"，
+>   任何动过或没跑完的干净样本都计入分母。
+> - A2 的 outcome 按 metric 分流：`blocked` 恒为 0，`no_leak` 走独立判官复检，
+>   不再用一致性校验冒充所有指标。
+> - 判官故障单列 `judge_error`，不进入 `detected` / `blocked`；故障率 >5% 时该臂结果标记为不可采信。
+> - 上表为历史运行结果；修复后的全量结果以 `logs/agent/2026-11-20-full/` 下的产物与 `--compare` 为准。
 
 三个结论：
 
@@ -228,22 +233,24 @@ python -m agent.benchmark.agent_eval --arm A4R --live
 
 ## 路线
 
-历史里程碑：`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ✅`
+历史里程碑：`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ⬜（目录待补齐）`
 
 当前 Sprint（以 [改造路线图](agent/docs/decisions/改造路线图.md) 为准）：
 
-`S0 基线加固 ✅ → S1a 修复闭环 ✅ → S1b 效果层与回放（待做）→ S2 服务化 → S3 RAG`
+`S0 基线加固 ✅ → S1a 修复闭环 ✅ → S1b 效果层与回放（部分完成）→ S2 服务化 → S3 RAG`
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | S0 | `baseline_lock.json` v2.0、运行清单、CI 指纹复现 | ✅ |
 | S1a | `rewrite_segment`、A3R 多轮修复、`generate/judge` 分侧路由、dev/test 切分 | ✅ |
-| S1b | A2 臂、L3 胜率与统计、replay、checkpoint 批量接入 | ⬜ |
+| S1b | A2 臂、L3 胜率与统计 | ✅ |
+| S1b | replay、checkpoint 批量接入 | ⬜ |
 | S2 | MCP Server、Docker、OpenTelemetry | ⬜ |
 | S3 | RAG 增强（当前仅 `A5-RAG` 命名占位） | ⬜ |
 
-作品集产物（三件套报告 + 图 + trace 样例）在 `portfolio/agent-augmentation/`：
+作品集产物（三件套报告 + 图 + trace 样例）目标位置为 `portfolio/agent-augmentation/`：
 `benchmark_report.{html,md,json}`、`figures/*.svg`、`04_trace_sample.jsonl`、`05_before_after.md`。
+该目录当前尚未生成，不能作为已交付产物引用。
 
 ## 文档
 
