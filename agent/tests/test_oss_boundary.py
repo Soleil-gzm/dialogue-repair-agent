@@ -21,6 +21,8 @@ FORBIDDEN_IMPORT_ROOTS = {"pipeline", "configs", "steps"}
 # 不参与清单比对的内容（清单自身无法自我列举；生成物目录不纳入版本管理）
 IGNORED_DIRS = {"__pycache__", "output", ".pytest_cache", ".export_check"}
 IGNORED_NAMES = {"oss_manifest.txt"}
+# 私有轨真实业务数据：已 gitignore，不入 manifest（ADR D6：仅本地留存）
+IGNORED_PREFIXES = {("fixtures", "private")}
 
 # 扫描器自身必然包含黑名单词，需豁免（否则自指误报）
 SCANNER_SELF = "tests/test_oss_boundary.py"
@@ -51,6 +53,8 @@ def _actual_files():
             continue
         rel = p.relative_to(AGENT_ROOT)
         if any(part in IGNORED_DIRS for part in rel.parts):
+            continue
+        if any(rel.parts[:len(pre)] == pre for pre in IGNORED_PREFIXES):
             continue
         if p.name in IGNORED_NAMES:
             continue
