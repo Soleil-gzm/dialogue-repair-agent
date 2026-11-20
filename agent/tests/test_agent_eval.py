@@ -57,6 +57,20 @@ class TestBuildRuntime:
 
 
 class TestRuleArm:
+    def test_run_arm_tags_client_with_arm(self, dataset):
+        """账本按臂归集：跑哪个臂，客户端就要被标记成哪个臂。"""
+        base, defects = dataset
+
+        class _Tagged(_CyclicClient):
+            arm = "adhoc"
+
+            def set_arm(self, arm):
+                self.arm = arm
+
+        client = _Tagged()
+        run_arm(A3L, base, defects[:1], client=client)
+        assert client.arm == A3L
+
     def test_counts_and_block_rate(self, dataset):
         base, defects = dataset
         result = run_arm(A3, base, defects)

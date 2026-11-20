@@ -65,6 +65,8 @@ class DeepSeekClient:
     ledger: Optional[TokenLedger] = None
     # 不传则按调用时刻自动选高峰/空闲价
     pricing: Optional[Pricing] = None
+    # 账本归集用的臂名；由 run_arm 在每次运行前注入
+    arm: str = "adhoc"
 
     # 测试注入点
     transport: Optional[httpx.BaseTransport] = None
@@ -83,6 +85,10 @@ class DeepSeekClient:
     def _active_pricing(self) -> Pricing:
         """显式注入的价目优先；否则按每次调用时刻取档，跨时段也不会串价。"""
         return self.pricing or select_pricing()
+
+    def set_arm(self, arm: str) -> None:
+        """标记后续调用的账本归集臂名。"""
+        self.arm = arm
 
     # ------------------------------------------------------------------ 调用
     def chat(
@@ -286,6 +292,7 @@ class DeepSeekClient:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cached_tokens=cached_tokens,
+            arm=self.arm,
             model=self.settings.model,
             provider=self.settings.provider,
             latency_ms=latency_ms,

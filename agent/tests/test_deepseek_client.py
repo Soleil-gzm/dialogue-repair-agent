@@ -123,6 +123,18 @@ class TestUsageAccounting:
         assert e.cost_cny == pytest.approx(0.04 + 8.0)
         assert e.price_table_version == PEAK.version
 
+    def test_default_arm_is_adhoc(self):
+        ledger = TokenLedger()
+        _client(_ok, ledger=ledger).chat(PROMPT)
+        assert ledger.entries[0].arm == "adhoc"
+
+    def test_injected_arm_is_recorded(self):
+        ledger = TokenLedger()
+        c = _client(_ok, ledger=ledger)
+        c.set_arm("A2")
+        c.chat(PROMPT)
+        assert ledger.entries[0].arm == "A2"
+
 
 class TestJsonModeGuard:
     def test_rejects_prompt_without_json_keyword(self):

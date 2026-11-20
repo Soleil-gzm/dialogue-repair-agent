@@ -68,6 +68,14 @@ class StageRoutedClient:
         client = self.judge_client if kwargs.get("stage") == "judge" else self.generate_client
         return client.chat(messages, **kwargs)
 
+    def set_arm(self, arm: str) -> None:
+        """把臂名同时下发到两个子客户端，保证账本 by_arm 归集正确。"""
+        for client in {id(self.generate_client): self.generate_client,
+                       id(self.judge_client): self.judge_client}.values():
+            setter = getattr(client, "set_arm", None)
+            if callable(setter):
+                setter(arm)
+
 
 class FakeLLMClient:
     """确定性假客户端。

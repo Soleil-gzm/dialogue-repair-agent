@@ -52,7 +52,7 @@ class LedgerEntry:
     input_tokens: int = 0
     output_tokens: int = 0
     cached_tokens: int = 0
-    arm: str = "A3"
+    arm: str = "adhoc"
     provider: str = "deepseek"
     model: str = ""
     prompt_version: str = ""

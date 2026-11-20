@@ -263,6 +263,12 @@ def run_arm(
         defects: 缺陷记录，形如 {"dialogue", "defect": {"type": ...}, "base_index"}
         ledger: 可选 TokenLedger，用于取真实成本
     """
+    # 账本按臂归集：每次运行前把当前臂名注入客户端（含路由客户端的两个子客户端）
+    for c in (client, judge):
+        setter = getattr(c, "set_arm", None)
+        if callable(setter):
+            setter(arm)
+
     if arm == A2:
         return _run_a2(base, defects, client=client, run_id=run_id, ledger=ledger)
 

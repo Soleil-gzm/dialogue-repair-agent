@@ -72,6 +72,21 @@ class TestStageRouting:
         c = StageRoutedClient(gen)
         assert c.chat([{"role": "user", "content": "x"}], stage="judge").text == "gen"
 
+    def test_set_arm_reaches_both_clients(self):
+        class Recorder:
+            def __init__(self):
+                self.arm = "adhoc"
+
+            def set_arm(self, arm):
+                self.arm = arm
+
+            def chat(self, messages, **kwargs):
+                return LLMResponse(text="{}")
+
+        gen, judge = Recorder(), Recorder()
+        StageRoutedClient(gen, judge).set_arm("A4")
+        assert (gen.arm, judge.arm) == ("A4", "A4")
+
     def test_build_stage_clients_uses_judge_model(self):
         from agent.runtime.deepseek import build_stage_clients
 
