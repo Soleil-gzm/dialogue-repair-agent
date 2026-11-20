@@ -10,7 +10,8 @@ import pytest
 
 from agent.runtime.ledger import Pricing
 from agent.runtime.pricing import (
-    CST, OFF_PEAK, PEAK, PRICE_TABLE_VERSION, PRICES, select_pricing,
+    CST, LOCAL_ZERO, OFF_PEAK, PEAK, PRICE_TABLE_VERSION, PRICES,
+    pricing_policy, select_pricing,
 )
 
 
@@ -33,6 +34,23 @@ class TestPriceTable:
         assert PEAK.version != OFF_PEAK.version
         assert PEAK.version.startswith(PRICE_TABLE_VERSION)
         assert set(PRICES) == {PEAK.version, OFF_PEAK.version}
+
+
+class TestPricingPolicy:
+    """LLM_PRICE_TABLE 决定单价；local 只把单价降为 0，不影响计量。"""
+
+    def test_default_is_deepseek_peak_offpeak(self):
+        assert pricing_policy({}) is None
+
+    def test_local_returns_zero_price(self):
+        p = pricing_policy({"LLM_PRICE_TABLE": "local"})
+        assert p is LOCAL_ZERO
+        assert p.cost(10_000, 10_000) == 0.0
+        assert p.version == "local"
+
+    def test_unknown_table_raises(self):
+        with pytest.raises(ValueError, match="LLM_PRICE_TABLE"):
+            pricing_policy({"LLM_PRICE_TABLE": "openai"})
 
 
 class TestSelection:

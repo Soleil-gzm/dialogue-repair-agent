@@ -14,7 +14,8 @@
 """
 
 from datetime import datetime, time, timedelta, timezone
-from typing import Optional
+from os import environ as _os_environ
+from typing import Mapping, Optional
 
 from .ledger import Pricing
 
@@ -43,6 +44,32 @@ OFF_PEAK = Pricing(
 
 PRICES = {PEAK.version: PEAK, OFF_PEAK.version: OFF_PEAK}
 
+# 自建/本地推理（如 Ollama）没有按 token 计费：单价记 0，
+# 但 token 量与调用次数照常入账，成本口径才不会缺失。
+LOCAL_ZERO = Pricing(
+    input_per_1m=0.0,
+    cache_hit_input_per_1m=0.0,
+    output_per_1m=0.0,
+    version="local",
+)
+
+
+def pricing_policy(environ: Optional[Mapping[str, str]] = None) -> Optional[Pricing]:
+    """按 LLM_PRICE_TABLE 选择计费策略。
+
+    - deepseek（默认）：返回 None，由客户端按调用时刻自动选高峰/空闲价
+    - local：返回零价表，token 照记、成本记 0
+    """
+    env = _os_environ if environ is None else environ
+    name = (env.get("LLM_PRICE_TABLE") or "deepseek").strip().lower()
+    if name == "deepseek":
+        return None
+    if name == "local":
+        return LOCAL_ZERO
+    raise ValueError(
+        f"LLM_PRICE_TABLE={name!r} 无法识别（合法值：deepseek/local）"
+    )
+
 
 def select_pricing(at: Optional[datetime] = None) -> Pricing:
     """按调用时刻选档。
@@ -57,6 +84,6 @@ def select_pricing(at: Optional[datetime] = None) -> Pricing:
 
 
 __all__ = [
-    "CST", "OFF_PEAK", "OFF_PEAK_END", "OFF_PEAK_START",
-    "PEAK", "PRICES", "PRICE_TABLE_VERSION", "select_pricing",
+    "CST", "LOCAL_ZERO", "OFF_PEAK", "OFF_PEAK_END", "OFF_PEAK_START",
+    "PEAK", "PRICES", "PRICE_TABLE_VERSION", "pricing_policy", "select_pricing",
 ]

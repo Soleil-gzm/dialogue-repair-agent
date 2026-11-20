@@ -21,7 +21,7 @@ from tenacity import Retrying, retry_if_exception, stop_after_attempt, wait_expo
 from .config import LLMSettings, judge_settings
 from .ledger import LedgerEntry, Pricing, TokenLedger
 from .llm import LLMResponse, StageRoutedClient
-from .pricing import select_pricing
+from .pricing import pricing_policy, select_pricing
 
 RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
@@ -310,10 +310,14 @@ def build_stage_clients(environ=None, ledger: Optional[TokenLedger] = None,
     judge_cfg = judge_settings(environ)
     # 从同一个 environ 解析密钥，缺失时在这里明确失败一次
     api_key = gen_settings.api_key(environ)
+    # 计费策略：LLM_PRICE_TABLE=local 时单价为 0，token 照记
+    pricing = pricing_policy(environ)
     generate = DeepSeekClient(
-        settings=gen_settings, api_key=api_key, ledger=ledger, transport=transport,
+        settings=gen_settings, api_key=api_key, ledger=ledger,
+        pricing=pricing, transport=transport,
     )
     judge = DeepSeekClient(
-        settings=judge_cfg, api_key=api_key, ledger=ledger, transport=transport,
+        settings=judge_cfg, api_key=api_key, ledger=ledger,
+        pricing=pricing, transport=transport,
     )
     return StageRoutedClient(generate, judge)
