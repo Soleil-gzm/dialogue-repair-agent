@@ -159,10 +159,16 @@ def mcnemar(outcomes_a: List[bool], outcomes_b: List[bool]) -> McNemarResult:
 
     # 连续性校正的卡方
     chi2 = (abs(n10 - n01) - 1) ** 2 / b_plus_c
-    # 精确二项检验：用 binomial 分布检验 n10 是否偏离 b_plus_c 的 0.5
-    p_value = _binomial_two_tailed(n10, b_plus_c, 0.5)
 
-    method = "exact" if b_plus_c < 25 else "chi2"
+    # 小样本用精确二项；大样本才用卡方近似。
+    # 注意：两者必须返回与 method 一致的 p 值，不能标 exact 却给近似值。
+    if b_plus_c < 25:
+        p_value = _binomial_two_tailed(n10, b_plus_c, 0.5)
+        method = "exact"
+    else:
+        # 卡方(1) 的生存函数：P(X >= chi2) = erfc(sqrt(chi2 / 2))
+        p_value = math.erfc(math.sqrt(max(0.0, chi2) / 2.0))
+        method = "chi2"
     return McNemarResult(
         chi2=round(chi2, 6),
         p_value=round(p_value, 6),
@@ -172,49 +178,35 @@ def mcnemar(outcomes_a: List[bool], outcomes_b: List[bool]) -> McNemarResult:
 
 
 def _binomial_two_tailed(k: int, n: int, p: float) -> float:
-    """二项分布的双侧 p 值。"""
+    """二项分布的双侧精确 p 值。
+
+    在 p=0.5 的对称情形下就是 2 × min(P(X≤k), P(X≥k))，用整数组合数计算，
+    不引入正态近似，避免小样本（如 4 vs 0）被算成假显著。
+    """
     if n <= 0:
         return 1.0
+    k = max(0, min(n, int(k)))
 
-    # 用正态近似的二项 p 值（在 p=0.5 对称时双侧近似 = 单侧 × 2）
-    mu = n * p
-    var = n * p * (1 - p)
-    sigma = math.sqrt(var)
+    if abs(p - 0.5) < 1e-12:
+        tail = sum(math.comb(n, i) for i in range(0, k + 1)) / (2.0 ** n)
+        return min(1.0, 2.0 * tail)
 
-    if sigma < 1e-10:
-        return 1.0 if k == int(mu) else 0.0
+    # 非 0.5 的一般精确检验：累加概率不大于观测值概率的所有结果
+    def _pmf(i: int) -> float:
+        return math.comb(n, i) * (p ** i) * ((1 - p) ** (n - i))
 
-    # 连续性校正：P(X >= k) ≈ P(Z >= (k - 0.5 - mu) / sigma)
-    z_upper = (k - 0.5 - mu) / sigma
-    # P(X <= k-1) ≈ P(Z <= (k - 0.5 - mu) / sigma)（用同一连续性校正点）
-    # 但双侧 = 2 * min(tail(k >= mu), tail(k <= mu))
-
-    cdf_k = _normal_cdf(z_upper)   # P(Z <= z_upper)
-    if k >= mu:
-        tail_upper = 1.0 - cdf_k    # P(Z >= z_upper)
-        tail_lower = _normal_cdf(-z_upper)  # 对称下界
-    else:
-        tail_lower = cdf_k           # P(Z <= z_upper)
-        tail_upper = 1.0 - cdf_k
-
-    p_two = 2 * min(tail_lower, tail_upper)
-    return min(1.0, max(0.0, p_two))
+    observed = _pmf(k)
+    total = 0.0
+    for i in range(n + 1):
+        pi = _pmf(i)
+        if pi <= observed * (1 + 1e-12):
+            total += pi
+    return min(1.0, max(0.0, total))
 
 
 def _normal_cdf(z: float) -> float:
-    """标准正态 CDF 的数值积分近似（Abramowitz & Stegun 7.1.26）。"""
-    # 用 erf 近似：erf(z) ≈ 1 - (a1*t + a2*t² + ... + a5*t⁵)*exp(-z²)
-    z_abs = abs(z)
-    t = 1.0 / (1.0 + 0.3275911 * z_abs)
-    a1 = 0.254829592
-    a2 = -0.284496736
-    a3 = 1.421413741
-    a4 = -1.453152027
-    a5 = 1.061405429
-    erf_approx = 1.0 - ((a1 * t + a2 * t * t + a3 * t ** 3 +
-                         a4 * t ** 4 + a5 * t ** 5) * math.exp(-z_abs * z_abs))
-    half = 0.5 * (1.0 + erf_approx)
-    return half if z >= 0 else (1.0 - half)
+    """标准正态 CDF：Φ(z) = 0.5 · erfc(-z / √2)。"""
+    return 0.5 * math.erfc(-z / math.sqrt(2))
 
 
 # --------------------------------------------------------------------------
