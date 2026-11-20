@@ -11,9 +11,10 @@ import pytest
 
 from agent.benchmark.agent_eval import (
     A2, A3, A3L, A3R, A4, A4R, ArmResult, _collect_outcomes_a2, _parse_a2_output,
-    a2_clean_intervened, build_runtime, run_arm,
+    a2_clean_intervened, build_runtime, main, run_arm,
 )
-from agent.benchmark.defects import generate, inject
+from agent.benchmark.defects import generate, inject, to_jsonl
+from agent.benchmark.fixtures import generate_dialogues
 from agent.runtime.llm import FakeLLMClient, LLMResponse
 from agent.runtime.trace import TraceWriter
 
@@ -477,3 +478,64 @@ class TestSerialization:
         r = ArmResult(arm=A3)
         assert r.macro_recall() == 0.0
         assert r.clean_intervention_rate() == 0.0
+
+
+class TestCustomInput:
+    """--input/--defects：私有轨（无标签）与公开轨共用同一评测入口。"""
+
+    @staticmethod
+    def _write_base(tmp_path, n=3):
+        dialogues = generate_dialogues(n=n, seed=7)
+        p = tmp_path / "base.json"
+        p.write_text(json.dumps(dialogues, ensure_ascii=False), encoding="utf-8")
+        return p, dialogues
+
+    @staticmethod
+    def _write_defects(tmp_path, dialogues):
+        records = generate(dialogues, per_type=1, seed=3)
+        p = tmp_path / "defects.jsonl"
+        p.write_text(to_jsonl(records), encoding="utf-8")
+        return p, records
+
+    def test_observational_mode_without_labels(self, tmp_path):
+        base_path, _ = self._write_base(tmp_path)
+        out = tmp_path / "out.json"
+        code = main(["--arm", A3, "--input", str(base_path), "--out", str(out)])
+        assert code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["run"]["data_mode"] == "observational"
+        assert payload["run"]["n_defects"] == 0
+        assert payload["clean_total"] == 3
+        # 没有缺陷标签时不产出检出率结论
+        assert payload["macro_recall_blocked"] == 0.0
+
+    def test_limit_base_caps_clean_samples(self, tmp_path):
+        base_path, _ = self._write_base(tmp_path, n=5)
+        out = tmp_path / "out.json"
+        code = main(["--arm", A3, "--input", str(base_path),
+                     "--limit-base", "2", "--out", str(out)])
+        assert code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["clean_total"] == 2
+
+    def test_limit_base_rejected_when_defects_present(self, tmp_path):
+        base_path, dialogues = self._write_base(tmp_path)
+        defects_path, _ = self._write_defects(tmp_path, dialogues)
+        code = main(["--arm", A3, "--input", str(base_path),
+                     "--defects", str(defects_path), "--limit-base", "1"])
+        assert code == 2
+
+    def test_custom_defects_file_is_used(self, tmp_path):
+        base_path, dialogues = self._write_base(tmp_path)
+        defects_path, records = self._write_defects(tmp_path, dialogues)
+        out = tmp_path / "out.json"
+        code = main(["--arm", A3, "--input", str(base_path),
+                     "--defects", str(defects_path), "--out", str(out)])
+        assert code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["run"]["data_mode"] == "defects"
+        assert payload["run"]["n_defects"] == len(records)
+
+    def test_missing_input_returns_error(self, tmp_path):
+        code = main(["--arm", A3, "--input", str(tmp_path / "absent.json")])
+        assert code == 2

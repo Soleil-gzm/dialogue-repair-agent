@@ -693,13 +693,53 @@ def _collect_outcomes_a2(
     return outcomes
 
 
-def _load_public(root: Path):
-    """加载公开轨 fixture：干净对话列表 + 缺陷记录列表。"""
-    pub = root / "agent" / "fixtures" / "public"
-    base = json.loads((pub / "base_v1.json").read_text(encoding="utf-8"))
-    lines = (pub / "defects_v1.jsonl").read_text(encoding="utf-8").strip().split("\n")
-    defects = [json.loads(line) for line in lines if line.strip()]
-    return base, defects
+def _load_records(path: Path) -> List[dict]:
+    """加载 JSON 数组或 JSONL 记录列表。"""
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".jsonl":
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    data = json.loads(text)
+    return data if isinstance(data, list) else [data]
+
+
+def _load_inputs(pub: Path, args):
+    """解析评测输入，返回 (base_path, defects_path, base, defects)；失败返回 None。
+
+    默认公开轨。只给 --input 不给 --defects 时进入观测模式：数据没有缺陷标签，
+    只测干净样本上的干预率等无标签指标，不产出 recall。
+    """
+    base_path = Path(args.input) if args.input else pub / "base_v1.json"
+    if not base_path.is_file():
+        print(f"[ERROR] 输入文件不存在: {base_path}", file=sys.stderr)
+        return None
+    base = _load_records(base_path)
+
+    if args.defects:
+        defects_path: Optional[Path] = Path(args.defects)
+        if not defects_path.is_file():
+            print(f"[ERROR] 缺陷文件不存在: {defects_path}", file=sys.stderr)
+            return None
+        defects = _load_records(defects_path)
+    elif args.input:
+        defects_path = None
+        defects = []
+    else:
+        defects_path = pub / "defects_v1.jsonl"
+        defects = _load_records(defects_path)
+
+    if args.limit_base:
+        if defects:
+            print("[ERROR] --limit-base 仅用于观测模式（无缺陷标签）", file=sys.stderr)
+            return None
+        base = base[: args.limit_base]
+
+    if defects_path is None:
+        print(
+            f"[INFO] 观测模式：仅跑 {len(base)} 条样本，不产出检出率/召回",
+            file=sys.stderr,
+        )
+
+    return base_path, defects_path, base, defects
 
 
 def main(argv=None) -> int:
@@ -708,6 +748,12 @@ def main(argv=None) -> int:
     ap.add_argument("--compare", default="",
                     help="L3 跨臂对比：\"A3,A2\" 或 \"A4,A3L\" 格式")
     ap.add_argument("--live", action="store_true", help="在线臂：需要 .env 中的密钥")
+    ap.add_argument("--input", default="",
+                    help="干净对话 JSON 路径；默认 agent/fixtures/public/base_v1.json")
+    ap.add_argument("--defects", default="",
+                    help="缺陷记录 JSONL 路径；指定 --input 时可省略（观测模式，无标签）")
+    ap.add_argument("--limit-base", type=int, default=0,
+                    help="最多取 N 条干净样本；仅观测模式生效（调试用）")
     ap.add_argument("--limit", type=int, default=0, help="每类最多取 N 条（调试用）")
     ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean", "no_leak"],
                     help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
@@ -727,7 +773,10 @@ def main(argv=None) -> int:
 
     root = Path.cwd()
     pub = root / "agent" / "fixtures" / "public"
-    base, defects = _load_public(root)
+    loaded = _load_inputs(pub, args)
+    if loaded is None:
+        return 2
+    base_path, defects_path, base, defects = loaded
     if args.limit > 0:
         kept, counts = [], {}
         for d in defects:
@@ -797,16 +846,18 @@ def main(argv=None) -> int:
             arm in (A4, A4R) for arm in (arm_a, arm_b))
         payload["run"] = {
             "limit": args.limit,
+            "limit_base": args.limit_base,
+            "data_mode": "observational" if defects_path is None else "defects",
             "n_defects": len(defects),
             "n_base": len(base),
             "generated_at": stamp,
         }
         # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
+        input_fp = {"base": input_fingerprint(base_path, root=root)}
+        if defects_path:
+            input_fp["defects"] = input_fingerprint(defects_path, root=root)
         payload["fingerprint"] = {
-            "input": {
-                "base": input_fingerprint(pub / "base_v1.json", root=root),
-                "defects": input_fingerprint(pub / "defects_v1.jsonl", root=root),
-            },
+            "input": input_fp,
             "evaluator": evaluator_fingerprint(
                 rules_version=RULES_VERSION,
                 judge_prompt_version=JUDGE_VERSION,
@@ -834,7 +885,9 @@ def main(argv=None) -> int:
                     arms=[arm_a, arm_b],
                     models={"generate": model_name,
                             "judge": judge_model_name if uses_judge else None},
-                    extra={"limit": args.limit, "n_defects": len(defects),
+                    extra={"limit": args.limit, "limit_base": args.limit_base,
+                           "data_mode": "observational" if defects_path is None else "defects",
+                           "n_defects": len(defects),
                            "n_base": len(base), "metric": args.metric,
                            "compare": [arm_a, arm_b]},
                 ),
@@ -857,16 +910,18 @@ def main(argv=None) -> int:
     uses_judge = args.arm in (A4, A4R)
     payload["run"] = {
         "limit": args.limit,
+        "limit_base": args.limit_base,
+        "data_mode": "observational" if defects_path is None else "defects",
         "n_defects": len(defects),
         "n_base": len(base),
         "generated_at": stamp,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
+    input_fp = {"base": input_fingerprint(base_path, root=root)}
+    if defects_path:
+        input_fp["defects"] = input_fingerprint(defects_path, root=root)
     payload["fingerprint"] = {
-        "input": {
-            "base": input_fingerprint(pub / "base_v1.json", root=root),
-            "defects": input_fingerprint(pub / "defects_v1.jsonl", root=root),
-        },
+        "input": input_fp,
         "evaluator": evaluator_fingerprint(
             rules_version=RULES_VERSION,
             judge_prompt_version=JUDGE_VERSION,
@@ -887,7 +942,9 @@ def main(argv=None) -> int:
                 arms=[args.arm],
                 models={"generate": model_name,
                         "judge": judge_model_name if args.arm in (A4, A4R) else None},
-                extra={"limit": args.limit, "n_defects": len(defects), "n_base": len(base)},
+                extra={"limit": args.limit, "limit_base": args.limit_base,
+                       "data_mode": "observational" if defects_path is None else "defects",
+                       "n_defects": len(defects), "n_base": len(base)},
             ),
             out.parent / f"manifest_{args.arm}.json",
         )
