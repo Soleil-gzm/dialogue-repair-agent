@@ -1,8 +1,8 @@
 # Agent 增强层 Benchmark 评测设计
 
-> 版本：v1.2  
+> 版本：v1.3  
 > 首次版本：v1.0（2026-11-12，原文见 [归档快照](../archive/v1.0-2026-11-12/Benchmark专项设计方案.md)）  
-> 最后修订：2026-11-23（新增公开轨 `realistic` 分布校准档）  
+> 最后修订：2026-11-23（新增 replay cassette 与 checkpoint 批量接入）  
 > 归属：`agent/docs/architecture/`  
 > 定位：**独立可执行方案**。本文是 Benchmark 指标口径、统计规则与产物规格的唯一权威来源。  
 > 本期范围：不包含 RAG（已移出），对照臂命名预留 `A5-RAG`。
@@ -33,7 +33,7 @@
 | L2 预算、Trace、死循环保护 | 已实现 | `runtime/budget.py`、`trace.py`、`loop.py` |
 | L3 胜率区间、McNemar | 已实现（Wilson CI + 精确二项） | 双盲、人工校准仍未实现 |
 | 指纹、不可变锁、运行清单、ledger | 已实现 | `benchmark/fingerprint.py`、`lock.py`、`manifest.py`、`runtime/ledger.py` |
-| replay / cassette / checkpoint 批量接入 | 未实现（S1b） | — |
+| replay / cassette / checkpoint 批量接入 | 已实现（S1b） | `runtime/cassette.py`、`checkpoint.py`；`agent_eval --profile replay / --cassette / --checkpoint` |
 | 报告三件套 + SVG | 已实现 | `benchmark/report.py` |
 | Docker / MCP / OTel | 未实现（S2） | — |
 
@@ -535,13 +535,19 @@ agent/benchmark/
 | 离线基线 | `python -m agent.benchmark.run --input agent/fixtures/public/base_v1.json --arms A0` | 否 | 冻结 / 复现 A0 | `arm_results.json`、`run_manifest.json`、lock |
 | 离线规则臂 | `python -m agent.benchmark.agent_eval --arm A3 --out ...` | 否 | 规则决策 + 确定性工具 | `ablation_A3.json` |
 | 在线臂 | `python -m agent.benchmark.agent_eval --arm A3L/A3R/A4 --live --out ...` | 是 | 正式数据 | 结果 JSON + `manifest_<arm>.json` + ledger |
+| 录制 cassette | `python -m agent.benchmark.agent_eval --arm A3L --live --cassette logs/agent/a3l.jsonl --out ...` | 是 | 留档真实响应 | cassette JSONL + 结果 |
+| 回放 cassette | `python -m agent.benchmark.agent_eval --arm A3L --profile replay --cassette logs/agent/a3l.jsonl --out ...` | 否 | 零成本复核结论 | 结果 JSON（`run.profile=replay`） |
+| 断点续跑 | 在上述命令加 `--checkpoint logs/agent/ck.jsonl` | 取决于所在档 | 中断后继续，不重复计费 | checkpoint JSONL + 结果 `resumed` |
 
 约束：
 
 - `run.py` **只支持 A0**，不能跑 A2/A3；Agent 臂统一走 `agent_eval.py`。传入其他臂会直接报错退出（不会生成空臂锁）。
-- `run.py --profile` 只是写入 lock 的标签，**不切换执行档位**。
-- `agent_eval` 的在线开关是 `--live`；缺少密钥时退出码 2。
-- replay / cassette 未实现（S1b），当前无法离线回放真实响应。
+- `run.py --profile` 只是写入 lock 的标签，**不切换执行档位**；`agent_eval --profile` 才是执行档位（`live` / `replay`）。
+- `agent_eval` 的在线开关是 `--live`；缺少密钥时退出码 2。`--profile replay` 与 `--live` 互斥，且不需要密钥。
+- replay 的请求指纹只覆盖 `messages / temperature / max_tokens / response_format / tools / idempotency_key`；换 prompt、换参数或换模型都会 miss 并直接报错，不会静默返回旧结果。
+- 回放响应一律标记 `cached=true`，因此不产生成本；`run.tokens` 仍按录制值回填，`run.cost_cny=0`。
+- checkpoint 键含臂名、数据类型与数据键，换臂或换数据不会误跳过；`failed` / `stopped` / 判官故障条目视为未完成，下次自动重试。
+- 逐条结果（检出/阻断/修复等）写入 checkpoint，续跑后的分母与指标与一次跑完一致；`tokens` / `cost` 只统计本轮新增消耗。
 
 ### 8.2 quick / standard / full（设计目标，未实现）
 
@@ -635,9 +641,9 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | L1 指标 | 规则、连贯性、D1 判官已实现 | 定位 P/R/F1 的完整统计未汇总 |
 | L2 指标 | 预算、死循环、Trace、回退已实现 | 无效调用率、可解释率未在报告汇总 |
 | L3 指标 | 基础统计已实现 | 胜率、Wilson CI、精确 McNemar 已实现；双盲、人工标注未实现 |
-| L4 指标 | token、成本、指纹复现已实现 | P95、缓存命中率、重复计费数未统计 |
+| L4 指标 | token、成本、指纹复现已实现；checkpoint 续跑与重复计费断言已接入 | P95、缓存命中率未统计 |
 | 报告产物 | 三件套 + 四张 SVG | 长表、显著性、账本汇总、trace 样例未生成 |
-| replay 档 | 未实现 | 无 cassette 机制 |
+| replay 档 | 已实现 | `--profile replay --cassette`；请求指纹匹配，缺失即报错 |
 | 档位规模 | 仅 `--limit` | quick/standard/full 未实现 |
 | `blocked` 口径 | 只统计 `fallback` | A3R 重写成功未计入，需在 S1b 统一 |
 | Docker/MCP/OTel | 未实现 | 路线图 S2 |
