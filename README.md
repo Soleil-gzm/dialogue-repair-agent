@@ -65,9 +65,9 @@ Sprint 1b 已完成 A2 单次重写臂与 L3 统计层（Wilson CI + 精确 McNe
 | **A2** | 单次 LLM 重写 | "LLM 重写"本身值不值 | ✅ 已实现 |
 | **A3** | Agent 工具循环 + 规则决策 | 工具循环比固定重写强多少 | ✅ 见下节消融 |
 | **A3L** | A3 的工具集 + LLM 决策 | 只换决策者是否值得 | ✅ |
-| **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 已实现，待 L3 复测 |
-| **A4** | A3L + 语义判官 | 判官是否值得 | ✅ 需在线密钥 |
-| **A4R** | A4 + `rewrite_segment` | LLM 决策拿到完整工具集后还能提多少 | ✅ 已实现，待评测 |
+| **A3R** | A3 + `rewrite_segment` 多轮修复 | 修复工具相对只回退的净收益 | ✅ 见下节消融 |
+| **A4** | A3L + 语义判官 | 判官是否值得 | ✅ 见下节消融 |
+| **A4R** | A4 + `rewrite_segment` | LLM 决策拿到完整工具集后还能提多少 | ✅ 见下节消融 |
 
 > **A1 已移除**：它做的是上游 `05_augment` 加噪（语气词/同义替换/语序），与"语义检测 + 改写"不是同一个任务；
 > 产物是变体列表，`n_out ≠ n_in` 无法配对，且脱离上游环境不可复现。旧指纹归档在
@@ -181,57 +181,88 @@ agent/
 
 ---
 
-## 消融结果（历史运行：DeepSeek API，模型标注 `deepseek-flash`）
+## 消融结果（2026-11-22 公开轨全量重跑：本地 Ollama `qwen3:8b`）
 
-> **溯源说明**：下表是历史运行产物，模型标注为当时的 `deepseek-flash`；当前代码默认模型是
-> `deepseek-chat`（见 `agent/runtime/config.py`）。两者不可混读，表中的数字不能用于描述当前默认配置。
-> 正式结论以带 manifest/fingerprint 的结果文件为准；本地 Ollama 重跑后的新表会替换本表并附产物出处。
+> **模型溯源**：生成与判官均为本地 Ollama `qwen3:8b`
+> （`http://127.0.0.1:11434/v1`，`temperature=0`、`max_tokens=2048`），
+> 模型文件 `digest 500a1f067a9f…`、`Q4_K_M`、8.2B、5.2GB。
+> 公司电脑与本地电脑的 Ollama 模型可能不同，`manifest_*.json` 的
+> `models.generate` / `models.judge` 已记录 provider、接入点、digest、量化方式与大小；
+> 引用数字前先核对 digest。A3 为离线规则臂，不调用模型，其 `models` 为 `null` 属预期。
+>
+> 历史 `deepseek-flash` 表已由本表替换；历史数字不可与本表混读。
 
-复现命令：
+复现命令（PowerShell）：
 
-```bash
-python -m agent.benchmark.agent_eval --arm A3 --out agent/benchmark/output/ablation_A3.json
-python -m agent.benchmark.agent_eval --arm A3L --live   # 需密钥，会消耗 token
-python -m agent.benchmark.agent_eval --arm A3R --live
-python -m agent.benchmark.agent_eval --arm A4  --live
-python -m agent.benchmark.agent_eval --arm A4R --live
+```powershell
+$env:DEEPSEEK_API_KEY="ollama"
+$env:DEEPSEEK_BASE_URL="http://127.0.0.1:11434/v1"
+$env:DEEPSEEK_MODEL="qwen3:8b"
+$env:JUDGE_MODEL="qwen3:8b"
+$env:JUDGE_BASE_URL="http://127.0.0.1:11434/v1"
+$env:LLM_PRICE_TABLE="local"
+$env:DEEPSEEK_TIMEOUT="300"
+
+$dir = "logs/agent/2026-11-22-public-ollama"
+python -m agent.benchmark.agent_eval --arm A3  --out "$dir/ablation_A3.json"
+python -m agent.benchmark.agent_eval --arm A3L --live --out "$dir/ablation_A3L.json"
+python -m agent.benchmark.agent_eval --arm A3R --live --out "$dir/ablation_A3R.json"
+python -m agent.benchmark.agent_eval --arm A4  --live --out "$dir/ablation_A4.json"
+python -m agent.benchmark.agent_eval --arm A4R --live --out "$dir/ablation_A4R.json"
+python -m agent.benchmark.agent_eval --arm A2  --live --out "$dir/ablation_A2.json"
+python -m agent.benchmark.report --results $dir --out "$dir/report"
 ```
 
-> 口径与溯源：下表为 120 条注入缺陷 + 12 条干净对话的单轮全量运行，成本来自 append-only ledger（高峰价）。
-> 结果 JSON 目前未入库（`output/` 被 gitignore），因此这些数字还无法按指纹复核；
-> 计划将结果快照与环境 manifest 一并提交，届时每个数字都可复算。
+> 口径：120 条注入缺陷（6 类 × 20）+ 12 条干净对话，单轮全量。
+> `blocked` = 最终回退原文；`repaired` 是改写后复检通过，不冒充回退。
+> 成本为 ¥0 是因为 `LLM_PRICE_TABLE=local`；token 仍来自 append-only ledger。
 
-| 臂 | 决策 | 工具 | D1 | D2 | D3 | D4 | D5 | D6 | 误报 | macro | tokens | 成本 |
+| 臂 | 决策 | 工具 | D1 | D2 | D3 | D4 | D5 | D6 | 误报 | macro | tokens | 调用 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| A3 | 规则 | 确定性 | 0/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 0/12 | 83.3% | 0 | ¥0 |
-| A3L | LLM | 确定性 | 0/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 0/12 | 83.3% | 251,561 | ¥0.40 |
-| A4 | LLM | 确定性 + 判官 | **20/20** | 20/20 | 20/20 | 20/20 | **20/20** | 20/20 | 0/12 | **100%** | 305,910 | ¥0.55 |
+| A2 | 单次重写 | 无 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 | 0/20 | 10/12 | 0.0% | 157,507 | 118 |
+| A3 | 规则 | 确定性 | 0/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 0/12 | 83.3% | 0 | 0 |
+| A3L | LLM | 确定性 | 0/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 0/12 | 83.3% | 233,376 | 284 |
+| A3R | 规则 | 确定性 + rewrite | 0/20 | 20/20 | 20/20 | 6/20 | 10/20 | 20/20 | 0/12 | 63.3% | 40,729 | 54 |
+| A4 | LLM | 确定性 + 判官 | **18/20** | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 0/12 | **98.3%** | 273,798 | 332 |
+| A4R | LLM | 全工具集 | 6/20 | 20/20 | 20/20 | 20/20 | 15/20 | 20/20 | 0/12 | 84.2% | 429,264 | 468 |
 
-\* A4 首轮 D5 为 19/20：评测期间宿主机进入 Modern Standby 39 分钟，
-恢复后该条的墙钟预算触发中止（检出但未回退）；单独复跑该条为 blocked。
-评测器现在把这类预算中止计入独立的 `stopped` 字段，不会混进"模型没检出"。
+**读表注意**
+
+- **A2 的 `blocked` 恒为 0**：它没有回退能力。上表 A2 的 D 列为 0 不代表"没看见"，
+  其 `detected` 统计的是"输入侧可被确定性规则看见"的比例；干净样本干预率 83.3%（10/12），
+  另有 7 条解析失败。
+- **A3R/A4R 的 `blocked` 低于 A3/A4 不是退化**：修复成功的样本计入 `repaired`，不再回退。
+  A3R 修复 24 条（D4 14、D5 10，repair_rate 24%）；A4R 修复 16 条（D1 12、D5 4，repair_rate 13.3%）。
+  `repaired` 只证明"改写后通过校验"，必须人工抽检后才能当作真修复引用。
+- **覆盖缺口**：A3L / A4 / A4R 分别有 2 / 2 / 3 条样本运行时 `failed`（异常结束），
+  已计入独立字段；判官故障均为 0，六个臂 `valid=true`，`judge_error_rate=0%`。
+- **干净样本**：除 A2 外，五个臂均为 0/12 误报，没有用误伤换召回。
+
+三个结论：
+
+1. **只换决策者（A3 → A3L）零增益**：宏观阻断率同为 83.3%，却多 284 次 LLM 调用。
+   这套工具集上瓶颈不在"选哪个工具"，而在工具能力本身。
+2. **语义判官（A3L → A4）是唯一能覆盖 D1 的层**：D1 从 0/20 到 18/20，
+   宏观阻断 83.3% → 98.3%（+15.0pp）。确定性规则对"答非所问"无能为力。
+3. **修复工具改变的是"回退 vs 修复"的分配，不一定提高 blocked**：
+   A3 → A3R 把 24 条从回退变为修复，但 blocked 降到 63.3%；
+   A4R 检出 100%，修复率却只有 13.3%，D4 仍全部回退。
+   因此评价修复臂必须同时看 `repaired` 与人工抽检，不能只看 `blocked`。
+
+产物与报告：`logs/agent/2026-11-22-public-ollama/`
+（`ablation_*.json`、`manifest_*.json`、`report/benchmark_report.{json,md,html}`、`report/figures/*.svg`）。
+`logs/` 与 `agent/benchmark/output/` 均为本地生成产物，不入库；按上面的命令可逐项复算。
 
 > **指标口径说明（2026-11-20 修订）**
 >
 > - `blocked` 只统计最终回退原文；`rewrite_segment` 修复成功计入 `detected` 与 `repaired`，
 >   不冒充"挡住并保住数据"。
-> - 干净样本干预率现在包含 `fallback`、`failed`、`stopped` 与"误报后改写成功"，
+> - 干净样本干预率包含 `fallback`、`failed`、`stopped` 与"误报后改写成功"，
 >   任何动过或没跑完的干净样本都计入分母。
 > - A2 的 outcome 按 metric 分流：`blocked` 恒为 0，`no_leak` 走独立判官复检，
 >   不再用一致性校验冒充所有指标。
 > - 判官故障单列 `judge_error`，不进入 `detected` / `blocked`；故障率 >5% 时该臂结果标记为不可采信。
-> - 上表为历史运行结果；修复后的全量结果以 `logs/agent/2026-11-20-full/` 下的产物与 `--compare` 为准。
-
-三个结论：
-
-1. **只换决策者（A3 → A3L）零增益，却多花 ¥0.40**。这套工具集上瓶颈不在"选哪个工具"，而在工具能力本身。
-2. **语义判官（A3L → A4）把 D1 从 0 拉到 100%**，宏观阻断 83.3% → 100%，增量成本 ¥0.15。
-3. **指标要能区分"没检出"和"被环境打断"**：39 分钟卡顿经查是 Windows 新型待机
-   （22:49:06 进入、23:28:27 退出，与两个进程的阻塞区间完全吻合），不是模型或接口问题 ——
-   同一请求复跑只需 2–3.5 秒。若不区分，就会把一次待机误判成决策层不遵守流程。
-
-成本口径来自 append-only ledger（高峰价）。单条成本 A4 约 ¥0.0042。
-计时数据受上述待机污染，不作为指标；token 与成本不受影响。
+> - 本表未包含 McNemar 显著性检验；跨臂显著性需另跑 `--compare` 产物。
 
 ---
 
