@@ -21,3 +21,5 @@ dist/
 !.env.example
 # workbuddy 文件
 .workbuddy/
+# 作品集
+portfolio/
