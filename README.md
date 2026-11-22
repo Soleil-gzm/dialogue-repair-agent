@@ -15,7 +15,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 **可回退修复闭环**（`rewrite_segment` + A3R 多轮策略）、dev/test 分层切分、
 `generate` / `judge` 分侧路由，以及 DeepSeek 客户端（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
 
-Sprint 1b 已完成 A2 单次重写臂与 L3 统计层（Wilson CI + 精确 McNemar）；剩余 replay 与 checkpoint 批量接入。
+Sprint 1b 已完成 A2 单次重写臂、L3 统计层（Wilson CI + 精确 McNemar）、replay cassette 与 checkpoint 批量续跑；剩余双盲判官与分布实验。
 完整设计见 [Agent 文档中心](agent/docs/README.md)。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。
@@ -159,7 +159,7 @@ agent/
 │   ├── registry.py       工具注册表 + 工具契约
 │   ├── loop.py           决策循环（预算 / 死循环识别 / 终止原因）
 │   ├── policy.py         决策策略（规则型 / LLM function calling）
-│   └── state.py / budget.py / trace.py / checkpoint.py
+│   └── state.py / budget.py / trace.py / checkpoint.py / cassette.py
 ├── eval/
 │   ├── entities.py       实体抽取（编号/电话/金额/日期，领域无关）
 │   ├── rules.py          五条硬约束：system / 结构 / 实体 / 说话人 / 跨角色泄漏
@@ -296,14 +296,14 @@ python -m agent.benchmark.report --results $dir --out "$dir/report"
 
 当前 Sprint（以 [改造路线图](agent/docs/decisions/改造路线图.md) 为准）：
 
-`S0 基线加固 ✅ → S1a 修复闭环 ✅ → S1b 效果层与回放（部分完成）→ S2 服务化 → S3 RAG`
+`S0 基线加固 ✅ → S1a 修复闭环 ✅ → S1b 效果层与回放（主体完成）→ S2 服务化 → S3 RAG`
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | S0 | `baseline_lock.json` v2.0、运行清单、CI 指纹复现 | ✅ |
 | S1a | `rewrite_segment`、A3R 多轮修复、`generate/judge` 分侧路由、dev/test 切分 | ✅ |
 | S1b | A2 臂、L3 胜率与统计 | ✅ |
-| S1b | replay、checkpoint 批量接入 | ⬜ |
+| S1b | replay cassette、checkpoint 批量续跑 | ✅ |
 | S2 | MCP Server、Docker、OpenTelemetry | ⬜ |
 | S3 | RAG 增强（当前仅 `A5-RAG` 命名占位） | ⬜ |
 
