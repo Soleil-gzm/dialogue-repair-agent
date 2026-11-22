@@ -16,6 +16,9 @@ from typing import Any, Dict, List, Optional, Sequence
 
 ARM_ORDER = ["A2", "A3", "A3L", "A3R", "A4", "A4R"]
 
+# 宏观阻断率差值的"无变化"阈值，单位：百分点（pp）
+UNCHANGED_PP = 0.5
+
 DEFECT_LABELS = {
     "D1_off_topic": "D1 答非所问",
     "D2_reference_broken": "D2 指代断裂",
@@ -182,10 +185,10 @@ def _conclusions(arms: List[Dict[str, Any]], recall: Dict[str, Dict[str, float]]
         m_hi = by_arm[hi].get("macro_recall_blocked", 0.0)
         delta = round((m_hi - m_lo) * 100, 1)
         cost = round(by_arm[hi].get("cost_cny", 0.0) - by_arm[lo].get("cost_cny", 0.0), 4)
-        if abs(delta) < 0.05:
+        if abs(delta) < UNCHANGED_PP:
             out.append(
-                f"{lo} → {hi}：宏观阻断率不变（{m_lo:.1%}），成本变化 ¥{cost:.2f} —— "
-                "该层因子在这套工具集上没有带来增量。")
+                f"{lo} → {hi}：宏观阻断率不变（变化 <{UNCHANGED_PP}pp，{m_lo:.1%}），"
+                f"成本变化 ¥{cost:.2f} —— 该层因子在这套工具集上没有带来增量。")
         else:
             out.append(
                 f"{lo} → {hi}：宏观阻断率 {m_lo:.1%} → {m_hi:.1%}（{delta:+.1f}pp），"
