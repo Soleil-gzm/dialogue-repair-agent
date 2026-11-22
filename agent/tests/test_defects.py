@@ -11,7 +11,8 @@ import json
 import pytest
 
 from agent.benchmark.defects import (
-    DEFECT_TYPES, OFF_TOPIC_REPLIES, generate, inject, to_jsonl,
+    DEFECT_TYPES, OFF_TOPIC_REPLIES, drop_skipped, generate, inject, is_skipped,
+    to_jsonl,
 )
 from agent.benchmark.fixtures import generate_dialogues
 from agent.eval.rules import check_consistency
@@ -63,6 +64,21 @@ class TestGenerate:
         lines = to_jsonl(records).strip().split("\n")
         assert len(lines) == len(records)
         assert json.loads(lines[0])["sample_key"] == records[0]["sample_key"]
+
+
+class TestSkippedRecords:
+    def test_is_skipped_only_when_marker_true(self):
+        assert is_skipped({"defect": {"skipped": True}})
+        assert not is_skipped({"defect": {"type": "D3_fact_conflict"}})
+        assert not is_skipped({})
+
+    def test_drop_skipped_excludes_from_denominator(self):
+        kept, dropped = drop_skipped([
+            {"defect": {"type": "D1_off_topic"}},
+            {"defect": {"type": "D2_reference_broken", "skipped": True}},
+        ])
+        assert len(kept) == 1
+        assert dropped == 1
 
 
 class TestInjectionShapes:

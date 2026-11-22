@@ -169,6 +169,21 @@ def inject(d: dict, defect_type: str, rng: random.Random) -> Tuple[dict, dict]:
     return _INJECTORS[defect_type](d, rng)
 
 
+def is_skipped(record: dict) -> bool:
+    """注入器因样本不满足条件而跳过的记录：不是有效缺陷样本。"""
+    return bool((record.get("defect") or {}).get("skipped"))
+
+
+def drop_skipped(records: List[dict]) -> Tuple[List[dict], int]:
+    """剔除注入失败的记录，避免它们进入 recall 分母。
+
+    Returns:
+        (kept, dropped)
+    """
+    kept = [r for r in records if not is_skipped(r)]
+    return kept, len(records) - len(kept)
+
+
 def generate(dialogues: List[dict], per_type: int = 20,
              seed: int = 20261113) -> List[dict]:
     """按类型均匀生成缺陷样本，返回带标注的记录列表。"""

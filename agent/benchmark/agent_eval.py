@@ -40,6 +40,7 @@ from ..runtime.registry import ToolRegistry
 from ..runtime.state import dialogue_key
 from ..tools import register_all
 from ..tools.rewrite_segment import REWRITE_SEGMENT, make_rewrite_segment
+from .defects import drop_skipped
 from .fingerprint import evaluator_fingerprint, input_fingerprint
 from .manifest import build_manifest, write_manifest
 from .report import write_review_markdown
@@ -746,6 +747,11 @@ def _load_inputs(pub: Path, args):
     else:
         defects_path = pub / "defects_v1.jsonl"
         defects = _load_records(defects_path)
+
+    # 注入失败的样本没有真实缺陷，剔除后 recall 分母才正确
+    defects, dropped = drop_skipped(defects)
+    if dropped:
+        print(f"[INFO] 剔除 {dropped} 条无法注入的缺陷样本（不计入分母）", file=sys.stderr)
 
     if args.limit_base:
         if defects:
