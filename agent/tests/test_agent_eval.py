@@ -586,3 +586,72 @@ class TestCustomInput:
     def test_missing_input_returns_error(self, tmp_path):
         code = main(["--arm", A3, "--input", str(tmp_path / "absent.json")])
         assert code == 2
+
+
+class TestReplayCLI:
+    """replay 档必须完全离线：无密钥、无 --live，cassette 缺失时启动即失败。"""
+
+    @staticmethod
+    def _write_base(tmp_path, n=3):
+        dialogues = generate_dialogues(n=n, seed=7)
+        p = tmp_path / "base.json"
+        p.write_text(json.dumps(dialogues, ensure_ascii=False), encoding="utf-8")
+        return p
+
+    def test_replay_requires_cassette_for_online_arm(self, tmp_path):
+        base_path = self._write_base(tmp_path)
+        code = main(["--arm", A3L, "--profile", "replay",
+                     "--input", str(base_path)])
+        assert code == 2
+
+    def test_replay_rejects_live_flag(self, tmp_path):
+        base_path = self._write_base(tmp_path)
+        code = main(["--arm", A3L, "--profile", "replay", "--live",
+                     "--cassette", str(tmp_path / "c.jsonl"),
+                     "--input", str(base_path)])
+        assert code == 2
+
+    def test_replay_missing_cassette_returns_error(self, tmp_path):
+        base_path = self._write_base(tmp_path)
+        code = main(["--arm", A3L, "--profile", "replay",
+                     "--cassette", str(tmp_path / "absent.jsonl"),
+                     "--input", str(base_path)])
+        assert code == 2
+
+    def test_offline_arm_replay_runs_without_llm(self, tmp_path):
+        base_path = self._write_base(tmp_path)
+        out = tmp_path / "out.json"
+        code = main(["--arm", A3, "--profile", "replay",
+                     "--input", str(base_path), "--out", str(out)])
+        assert code == 0
+        payload = json.loads(out.read_text(encoding="utf-8"))
+        assert payload["run"]["profile"] == "replay"
+        assert payload["run"]["replayed_calls"] == 0
+
+
+class TestCassetteIntegration:
+    """A2 的录制与回放必须产出同一份指标，且回放不触发任何真实调用。"""
+
+    def test_a2_record_then_replay_is_identical(self, dataset, tmp_path):
+        from agent.runtime.cassette import (
+            MODE_RECORD, MODE_REPLAY, CassetteClient,
+        )
+
+        base, defects = dataset
+        path = tmp_path / "a2.jsonl"
+
+        recorder = CassetteClient(path, mode=MODE_RECORD, inner=_EchoA2Client())
+        live = run_arm(A2, base, defects, client=recorder)
+        recorded = recorder.recorded
+        recorder.close()
+        assert recorded > 0
+
+        replay = CassetteClient(path, mode=MODE_REPLAY)
+        replayed = run_arm(A2, base, defects, client=replay)
+        replay.close()
+
+        assert replayed.per_type == live.per_type
+        assert replayed.clean_flagged == live.clean_flagged
+        assert replay.replayed == recorded
+        # 回放全部命中缓存：不产生新的计费调用
+        assert replayed.cost_cny == 0.0

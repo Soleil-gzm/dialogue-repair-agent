@@ -34,6 +34,7 @@ from ..eval.coherence import C0_JUDGE_ERROR, check_coherence
 from ..eval.judge import JUDGE_VERSION, RUBRIC_VERSION, LLMJudge
 from ..eval.rules import RULES_VERSION, check_consistency
 from ..runtime.budget import Budget
+from ..runtime.cassette import MODE_RECORD, MODE_REPLAY, CassetteClient
 from ..runtime.config import judge_settings
 from ..runtime.policy import LLMPolicy, RulePolicy
 from ..runtime.registry import ToolRegistry
@@ -775,6 +776,10 @@ def main(argv=None) -> int:
     ap.add_argument("--compare", default="",
                     help="L3 跨臂对比：\"A3,A2\" 或 \"A4,A3L\" 格式")
     ap.add_argument("--live", action="store_true", help="在线臂：需要 .env 中的密钥")
+    ap.add_argument("--profile", default="live", choices=["live", "replay"],
+                    help="执行档位：live 真实调用；replay 从 --cassette 离线回放")
+    ap.add_argument("--cassette", default="",
+                    help="cassette JSONL 路径：replay 档读取；live 档同时录制")
     ap.add_argument("--input", default="",
                     help="干净对话 JSON 路径；默认 agent/fixtures/public/base_v1.json")
     ap.add_argument("--defects", default="",
@@ -827,7 +832,23 @@ def main(argv=None) -> int:
     client = ledger = None
     judge_model_name = None
     generate_info = judge_info = None
-    if has_online:
+    replay = args.profile == "replay"
+    if replay:
+        if args.live:
+            print("[ERROR] --profile replay 与 --live 不能同时使用", file=sys.stderr)
+            return 2
+        if not has_online:
+            print("[INFO] 全部为离线臂（A3），replay 档无 LLM 调用可回放", file=sys.stderr)
+        elif not args.cassette:
+            print("[ERROR] replay 档需要 --cassette 指定录制文件", file=sys.stderr)
+            return 2
+        else:
+            try:
+                client = CassetteClient(args.cassette, mode=MODE_REPLAY)
+            except Exception as e:  # 文件缺失/损坏都在启动时明确失败
+                print(f"[ERROR] cassette 加载失败: {e}", file=sys.stderr)
+                return 2
+    elif has_online:
         if not args.live:
             print(f"[ERROR] 包含在线臂，需要 --live（会消耗 token）", file=sys.stderr)
             return 2
@@ -848,6 +869,9 @@ def main(argv=None) -> int:
         ledger = TokenLedger(ledger_dir / f"ledger_{tag}_{stamp_for_ledger}.jsonl")
         judge_cfg = judge_settings()
         client = build_stage_clients(ledger=ledger)
+        # live 档同时给 --cassette 时边跑边录，供后续 replay 复核
+        if args.cassette:
+            client = CassetteClient(args.cassette, mode=MODE_RECORD, inner=client)
         judge_model_name = judge_cfg.model
         # 跨机器（公司 / 本地）模型可能同名不同权重，必须记录接入点与 digest
         generate_info = model_provenance(settings)
@@ -888,6 +912,9 @@ def main(argv=None) -> int:
             "models": {"generate": generate_info,
                        "judge": judge_info if uses_judge else None},
             "generated_at": stamp,
+            "profile": args.profile,
+            "cassette": args.cassette or None,
+            "replayed_calls": getattr(client, "replayed", 0) if replay else 0,
         }
         # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
         input_fp = {"base": input_fingerprint(base_path, root=root)}
@@ -920,7 +947,7 @@ def main(argv=None) -> int:
             write_manifest(
                 build_manifest(
                     root=root,
-                    profile="compare",
+                    profile="replay" if replay else "compare",
                     arms=[arm_a, arm_b],
                     models={"generate": generate_info,
                             "judge": judge_info if uses_judge else None},
@@ -929,6 +956,8 @@ def main(argv=None) -> int:
                            "n_defects": len(defects),
                            "n_base": len(base), "metric": args.metric,
                            "tie_rule": args.tie_rule,
+                           "run_profile": args.profile,
+                           "cassette": args.cassette or None,
                            "a2_temperature": A2_TEMPERATURE if A2 in (arm_a, arm_b) else None,
                            "rules_version": RULES_VERSION,
                            "judge_prompt_version": JUDGE_VERSION if uses_judge else None,
@@ -965,6 +994,9 @@ def main(argv=None) -> int:
         "models": {"generate": generate_info,
                    "judge": judge_info if uses_judge else None},
         "generated_at": stamp,
+        "profile": args.profile,
+        "cassette": args.cassette or None,
+        "replayed_calls": getattr(client, "replayed", 0) if replay else 0,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
     input_fp = {"base": input_fingerprint(base_path, root=root)}
@@ -988,13 +1020,15 @@ def main(argv=None) -> int:
         write_manifest(
             build_manifest(
                 root=root,
-                profile="ablation",
+                profile="replay" if replay else "ablation",
                 arms=[args.arm],
                 models={"generate": generate_info,
                         "judge": judge_info if args.arm in (A4, A4R) else None},
                 extra={"limit": args.limit, "limit_base": args.limit_base,
                        "data_mode": "observational" if defects_path is None else "defects",
                        "n_defects": len(defects), "n_base": len(base),
+                       "run_profile": args.profile,
+                       "cassette": args.cassette or None,
                        "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None,
                        "rules_version": RULES_VERSION,
                        "judge_prompt_version": JUDGE_VERSION if uses_judge else None,
