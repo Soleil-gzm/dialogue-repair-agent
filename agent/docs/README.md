@@ -49,10 +49,10 @@
 |---|---|---|---|
 | [架构设计](architecture/架构设计.md) | v1.0 | 现行 | 整体架构图、模块划分、核心流程、技术选型、非功能性设计、实现边界 |
 | [模块与接口说明](architecture/模块与接口说明.md) | v1.0 | 现行 | 数据契约、4 个工具契约、运行时契约、5 个 CLI、配置与产物契约 |
-| [Benchmark评测设计](architecture/Benchmark评测设计.md) | v1.1 | 现行 | 基线指纹、可比性规则、数据集、L1–L4 指标、统计与报告规格 |
+| [Benchmark评测设计](architecture/Benchmark评测设计.md) | v1.2 | 现行 | 基线指纹、可比性规则、数据集（含 `realistic` 校准档）、L1–L4 指标、统计与报告规格 |
 | [决策记录ADR](decisions/决策记录ADR.md) | v1.3 | 现行 | D1–D10 决策、待定池、面试问答映射 |
-| [改造路线图](decisions/改造路线图.md) | v2.1 | 现行 | 关键词矩阵、S0–S3 Sprint 排序与状态 |
-| [部署与运行指南](guides/部署与运行指南.md) | v1.0 | 现行 | 安装、数据生成、离线复现、在线评测、报告、排障、部署边界 |
+| [改造路线图](decisions/改造路线图.md) | v2.2 | 现行 | 关键词矩阵、S0–S3 Sprint 排序与状态 |
+| [部署与运行指南](guides/部署与运行指南.md) | v1.1 | 现行 | 安装、数据生成（含 `--profile realistic`）、离线复现、在线评测、报告、排障、部署边界 |
 | [归档说明](archive/README.md) | — | 归档索引 | 版本追溯表与历史文档处置结论 |
 | [笔记索引](notes/README.md) | — | 过程记录 | 术语卡片、A1 移除、效果验证与鲁棒性实验 |
 | [代码审查报告](reviews/2026-11-20-项目状态评估与代码审查.md) | — | 审查记录 | 项目阶段、代码审查、代码漂移与整改建议 |
@@ -66,7 +66,7 @@
 ## 6. 历史文档
 
 - 旧版《对话数据Agent化改进计划书》v0.1 已归档，仅保留思路追溯。
-- 旧版《Benchmark专项设计方案》v1.0 已归档；现行版本为 [Benchmark评测设计](architecture/Benchmark评测设计.md) v1.1。
+- 旧版《Benchmark专项设计方案》v1.0 已归档；现行版本为 [Benchmark评测设计](architecture/Benchmark评测设计.md) v1.2。
 - 旧索引中的《Agent化改造总纲与Benchmark方案》《Agent化技术评估与落地方案》《数据策略评估与决策》《数据格式适配与兼容规范》已找回，归入 `archive/private/` 本地留存（不随开源切片发布）；有效内容已按主题并入现行文档，处置结论见 [归档说明](archive/README.md#3-找回副本的处置)。
 
 ## 7. 一致性校验
@@ -86,7 +86,7 @@ python -m agent.benchmark.run \
 提交前人工核对：
 
 - 臂名只使用 `A0/A2/A3/A3L/A3R/A4/A4R/A5-RAG`（A1 已于 2026-11-19 移出主链），且每个臂标注实现状态；
-- fixture 规模为 `base 12 / dev 30 / test 50 / defects 120`；
+- fixture 规模：`v1` 为 `base 12 / dev 30 / test 50`，`realistic` 为 `120 / 40 / 80`，缺陷集 `defects 120`；
 - CLI 参数与 [模块与接口说明](architecture/模块与接口说明.md) 一致；
 - 已实现：A2 单次重写、L3 胜率/CI/精确 McNemar；未实现能力（replay、checkpoint 批量接入、双盲 judge、人工校准、Docker、MCP、OTel、RAG 实现）不得写成已完成；
 - 所有相对链接可解析，归档路径不作为现行依据。
@@ -99,3 +99,4 @@ python -m agent.benchmark.run \
 | 2026-11-18 | 找回 4 份历史设计文档并归档到 `archive/private/`（不随开源切片发布）；归档旧文档索引；清理根目录重复副本 |
 | 2026-11-19 | 新增 `notes/` 目录与笔记索引（术语卡片 / A1 移除记录 / 效果验证与鲁棒性实验）；A1 移出主消融链，归档旧指纹 |
 | 2026-11-20 | 建立 `reviews/` 目录，收录项目状态评估与代码审查报告；约定后续审查报告按 `YYYY-MM-DD-主题.md` 命名 |
+| 2026-11-23 | Benchmark 评测设计升至 v1.2（新增公开轨 `realistic` 分布校准档）、改造路线图升至 v2.2（同步 S1b 进度）、部署指南升至 v1.1（补 `--profile realistic` 命令）；本索引同步版本号与 fixture 规模 |
