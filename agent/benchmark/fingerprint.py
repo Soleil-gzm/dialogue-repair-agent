@@ -44,13 +44,18 @@ def _count_records(path: Path) -> int:
 
 
 def _portable_path(p: Path, root: Optional[Path]) -> str:
-    """优先记录相对于项目根的路径，保证 lock 跨机器可比。"""
+    """记录机器无关的逻辑路径，保证 lock 跨机器可比。
+
+    - 根内：相对 root 的路径；
+    - 根外：只保留文件名并标记 `<external>`。绝对路径不参与判等，
+      真正决定等价性的是内容 sha256（同名不同内容仍会被识别）。
+    """
     try:
         base = Path(root).resolve() if root is not None else Path.cwd().resolve()
         rel = p.resolve().relative_to(base)
         return rel.as_posix()
     except (ValueError, OSError):
-        return str(p).replace("\\", "/")
+        return f"<external>/{p.name}"
 
 
 def input_fingerprint(

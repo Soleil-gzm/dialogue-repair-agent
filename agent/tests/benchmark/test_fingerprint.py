@@ -47,6 +47,18 @@ class TestInputFingerprint:
         p.write_text('{"a":1}\n{"a":2}\n', encoding="utf-8")
         assert input_fingerprint(p)["n_total"] == 2
 
+    def test_path_outside_root_is_machine_independent(self, tmp_path):
+        """根外输入不能把绝对路径写进指纹，否则跨机器 --verify 必然失败。"""
+        root = tmp_path / "root"
+        root.mkdir()
+        p = tmp_path / "external" / "data.json"
+        p.parent.mkdir()
+        p.write_text("[1]", encoding="utf-8")
+
+        fp = input_fingerprint(p, root=root)
+        assert fp["path"] == "<external>/data.json"
+        assert ":" not in fp["path"]
+
     def test_content_change_changes_hash(self, tmp_path):
         p = tmp_path / "a.json"
         p.write_text("[1]", encoding="utf-8")
