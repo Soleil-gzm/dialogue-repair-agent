@@ -15,6 +15,7 @@ class ItemCheckpoint:
     def __init__(self, path: Optional[Union[str, Path]] = None):
         self._path = Path(path) if path else None
         self._done: Dict[str, str] = {}
+        self._records: Dict[str, Dict[str, Any]] = {}
         self._fh = None
 
         if self._path is not None:
@@ -35,14 +36,24 @@ class ItemCheckpoint:
             key, status = rec.get("key"), rec.get("status")
             if key and status:
                 self._done[key] = status
+                self._records[key] = rec
 
     def is_done(self, key: str) -> bool:
         return self._done.get(key) in DONE_STATUSES
 
+    def get(self, key: str) -> Optional[Dict[str, Any]]:
+        """取已完成条目的完整记录（含额外字段）；未完成返回 None。
+
+        批量评测续跑需要的不只是"做过没有"，还要还原该条目的产出（如是否检出），
+        否则续跑后的分母与指标会与一次性跑完不一致。
+        """
+        return self._records.get(key) if self.is_done(key) else None
+
     def mark(self, key: str, status: str, **extra: Any) -> None:
         self._done[key] = status
+        rec = {"key": key, "status": status, **extra}
+        self._records[key] = rec
         if self._fh is not None:
-            rec = {"key": key, "status": status, **extra}
             self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
             self._fh.flush()
 

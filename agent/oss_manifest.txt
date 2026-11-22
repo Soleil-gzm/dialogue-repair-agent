@@ -87,6 +87,7 @@ tests/test_policy_rule.py
 tests/test_policy_llm.py
 tests/test_loop.py
 tests/test_checkpoint.py
+tests/test_checkpoint_batch.py
 tests/test_cassette.py
 tests/benchmark/__init__.py
 tests/benchmark/test_arms.py

@@ -35,6 +35,7 @@ from ..eval.judge import JUDGE_VERSION, RUBRIC_VERSION, LLMJudge
 from ..eval.rules import RULES_VERSION, check_consistency
 from ..runtime.budget import Budget
 from ..runtime.cassette import MODE_RECORD, MODE_REPLAY, CassetteClient
+from ..runtime.checkpoint import DONE_STATUSES, ItemCheckpoint
 from ..runtime.config import judge_settings
 from ..runtime.policy import LLMPolicy, RulePolicy
 from ..runtime.registry import ToolRegistry
@@ -106,6 +107,8 @@ class ArmResult:
     calls: int = 0
     cost_cny: float = 0.0
     elapsed_s: float = 0.0
+    # 断点续跑跳过的条目数：这些条目沿用上次结果，本轮不产生任何调用
+    resumed: int = 0
     # 已修复样本的原始对照，供 --review 导出人工抽检；不进入 to_dict
     samples: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -168,6 +171,7 @@ class ArmResult:
             "calls": self.calls,
             "cost_cny": self.cost_cny,
             "elapsed_s": round(self.elapsed_s, 2),
+            "resumed": self.resumed,
         }
 
 
@@ -192,6 +196,88 @@ def is_clean_intervention(result: Any) -> bool:
         or bool(getattr(result, "seen_issues", None))
         or _judge_failed(result)
     )
+
+
+def _ck_key(arm: str, kind: str, dialogue: Dict[str, Any]) -> str:
+    """断点键必须含臂与数据键：换臂或换数据都不能误跳过。"""
+    return f"{arm}:{kind}:{dialogue_key(dialogue)}"
+
+
+def _defect_outcome(result: Any) -> Dict[str, Any]:
+    """把单条缺陷样本的结果压缩成可续跑的记录。"""
+    judge_failed = _judge_failed(result)
+    return {
+        "status": result.status,
+        "judge_failed": judge_failed,
+        "failed": result.status == "failed",
+        "stopped": result.status == "stopped",
+        "detected": (not judge_failed) and bool(result.issues or result.seen_issues),
+        "blocked": (not judge_failed) and result.status == "fallback",
+        "repaired": (not judge_failed and result.status == "accepted"
+                     and bool(result.seen_issues)),
+    }
+
+
+def _record_defect_outcome(result: ArmResult, row: Dict[str, Any],
+                           outcome: Dict[str, Any]) -> None:
+    """按结果记录缺陷样本计数；首次运行与续跑共用，保证指标口径一致。"""
+    if outcome.get("judge_failed"):
+        result.judge_error += 1
+    if outcome.get("failed"):
+        result.failed += 1
+    if outcome.get("stopped"):
+        result.stopped += 1
+    if outcome.get("judge_failed"):
+        return
+    if outcome.get("detected"):
+        row["detected"] += 1
+    if outcome.get("blocked"):
+        row["blocked"] += 1
+    elif outcome.get("repaired"):
+        row["repaired"] = row.get("repaired", 0) + 1
+        result.repaired += 1
+
+
+def _clean_outcome(result: Any) -> Dict[str, Any]:
+    return {
+        "status": result.status,
+        "judge_failed": _judge_failed(result),
+        "failed": result.status == "failed",
+        "stopped": result.status == "stopped",
+        "intervened": is_clean_intervention(result),
+    }
+
+
+def _record_clean_outcome(result: ArmResult, outcome: Dict[str, Any]) -> None:
+    if outcome.get("judge_failed"):
+        result.judge_error += 1
+    if outcome.get("failed"):
+        result.failed += 1
+        result.clean_failed += 1
+    elif outcome.get("stopped"):
+        result.stopped += 1
+        result.clean_stopped += 1
+    elif outcome.get("intervened"):
+        result.clean_flagged += 1
+
+
+def _record_a2_defect(result: ArmResult, row: Dict[str, Any],
+                      outcome: Dict[str, Any]) -> None:
+    if outcome.get("parse_error"):
+        result.failed += 1
+    if outcome.get("detected"):
+        row["detected"] += 1
+    # A2 没有 fallback：blocked 永远为 0
+
+
+def _record_a2_clean(result: ArmResult, outcome: Dict[str, Any]) -> None:
+    if outcome.get("parse_error"):
+        result.failed += 1
+        result.clean_failed += 1
+        return
+    # 干净样本被 A2 动过（哪怕仍通过一致性）就算干预
+    if outcome.get("intervened"):
+        result.clean_flagged += 1
 
 
 def _assistant_contents(dialogue: Dict[str, Any]) -> List[str]:
@@ -359,6 +445,7 @@ def run_arm(
     run_id: str = "ablation",
     ledger: Any = None,
     trace: Any = None,
+    checkpoint: Any = None,
 ) -> ArmResult:
     """跑一个臂，返回聚合指标。
 
@@ -367,6 +454,8 @@ def run_arm(
         defects: 缺陷记录，形如 {"dialogue", "defect": {"type": ...}, "base_index"}
         ledger: 可选 TokenLedger，用于取真实成本
         trace: 可选 TraceWriter，落盘决策链（A2 无循环，不使用）
+        checkpoint: 可选 ItemCheckpoint；已完成条目直接复用上次产出，不再调用。
+            续跑时 tokens/cost 只统计本轮新增消耗，指标与一次跑完一致。
     """
     # 账本按臂归集：每次运行前把当前臂名注入客户端（含路由客户端的两个子客户端）
     for c in (client, judge):
@@ -375,7 +464,8 @@ def run_arm(
             setter(arm)
 
     if arm == A2:
-        return _run_a2(base, defects, client=client, run_id=run_id, ledger=ledger)
+        return _run_a2(base, defects, client=client, run_id=run_id,
+                       ledger=ledger, checkpoint=checkpoint)
 
     started = time.monotonic()
     runtime = build_runtime(arm, client=client, judge=judge, run_id=run_id, trace=trace)
@@ -389,30 +479,26 @@ def run_arm(
         row = result.per_type.setdefault(dtype, {"total": 0, "detected": 0, "blocked": 0})
         row["total"] += 1
 
+        ck_key = _ck_key(arm, "defect", record["dialogue"]) if checkpoint else ""
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            # 续跑：沿用上次判定，不重建运行时、不产生任何调用
+            result.resumed += 1
+            _record_defect_outcome(result, row, dict(saved.get("outcome") or {}))
+            if saved.get("sample"):
+                result.samples.append(saved["sample"])
+            continue
+
         reference = base[record["base_index"]] if base else None
         r = runtime.run(record["dialogue"], reference=reference)
-
         result.tokens += r.tokens
-        judge_failed = _judge_failed(r)
-        if judge_failed:
-            result.judge_error += 1
-        if r.status == "failed":
-            result.failed += 1
-        if r.status == "stopped":
-            result.stopped += 1
-        # 判官故障是基础设施问题，不得计成"模型检出/阻断"
-        if judge_failed:
-            continue
-        if r.issues or r.seen_issues:
-            row["detected"] += 1
-        if r.status == "fallback":
-            row["blocked"] += 1
-        elif r.status == "accepted" and r.seen_issues:
-            # 检出过问题、改写后复检通过：这才是"修复"，不是"回退"
-            row["repaired"] = row.get("repaired", 0) + 1
-            result.repaired += 1
+
+        outcome = _defect_outcome(r)
+        _record_defect_outcome(result, row, outcome)
+        sample = None
+        if outcome["repaired"]:
             # 自动"修复通过"不等于语义正确，留原始对照给人工抽检
-            result.samples.append({
+            sample = {
                 "key": dialogue_key(record["dialogue"]),
                 "type": dtype,
                 "status": r.status,
@@ -422,22 +508,27 @@ def run_arm(
                 "reference": reference,
                 "input": record["dialogue"],
                 "final": r.dialogue,
-            })
+            }
+            result.samples.append(sample)
+        if checkpoint and outcome["status"] in DONE_STATUSES:
+            checkpoint.mark(ck_key, outcome["status"], outcome=outcome, sample=sample)
 
     for dialogue in base:
         result.clean_total += 1
+
+        ck_key = _ck_key(arm, "base", dialogue) if checkpoint else ""
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            result.resumed += 1
+            _record_clean_outcome(result, dict(saved.get("outcome") or {}))
+            continue
+
         r = runtime.run(dialogue)
         result.tokens += r.tokens
-        if _judge_failed(r):
-            result.judge_error += 1
-        if r.status == "failed":
-            result.failed += 1
-            result.clean_failed += 1
-        elif r.status == "stopped":
-            result.stopped += 1
-            result.clean_stopped += 1
-        elif is_clean_intervention(r):
-            result.clean_flagged += 1
+        outcome = _clean_outcome(r)
+        _record_clean_outcome(result, outcome)
+        if checkpoint and outcome["status"] in DONE_STATUSES:
+            checkpoint.mark(ck_key, outcome["status"], outcome=outcome)
 
     if ledger:
         result.tokens = ledger.total_tokens(include_cached=False) - tokens_before
@@ -455,6 +546,7 @@ def _run_a2(
     client: Any,
     run_id: str,
     ledger: Any,
+    checkpoint: Any = None,
 ) -> ArmResult:
     """A2 专用路径：不经过 AgentRuntime 决策循环，一次 LLM 重写 + 无条件接受。"""
     started = time.monotonic()
@@ -468,6 +560,13 @@ def _run_a2(
         row = result.per_type.setdefault(dtype, {"total": 0, "detected": 0, "blocked": 0})
         row["total"] += 1
 
+        ck_key = _ck_key(A2, "defect", record["dialogue"]) if checkpoint else ""
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            result.resumed += 1
+            _record_a2_defect(result, row, dict(saved.get("outcome") or {}))
+            continue
+
         reference = base[record["base_index"]] if base else None
         # pre-A2 违规：噪声输入是否已能被确定性检查看见（不含 LLM 判官）
         pre_violations = check_consistency(
@@ -478,24 +577,31 @@ def _run_a2(
         r = run_a2_dialogue(client, record["dialogue"], run_id=f"{run_id}_a2")
         result.tokens += r["tokens"]
 
-        if r["parse_error"]:
-            result.failed += 1
-        if pre_violations:
-            row["detected"] += 1
-        # A2 没有 fallback：blocked 永远为 0
+        outcome = {"detected": bool(pre_violations),
+                   "parse_error": r["parse_error"]}
+        _record_a2_defect(result, row, outcome)
+        # 解析失败是可重试的瞬时问题，不写入断点
+        if checkpoint and not r["parse_error"]:
+            checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     for dialogue in base:
         result.clean_total += 1
+
+        ck_key = _ck_key(A2, "base", dialogue) if checkpoint else ""
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            result.resumed += 1
+            _record_a2_clean(result, dict(saved.get("outcome") or {}))
+            continue
+
         r = run_a2_dialogue(client, dialogue, run_id=f"{run_id}_a2c")
         result.tokens += r["tokens"]
 
-        if r["parse_error"]:
-            result.failed += 1
-            result.clean_failed += 1
-            continue
-        # 干净样本被 A2 动过（哪怕仍通过一致性）就算干预
-        if a2_clean_intervened(r, dialogue):
-            result.clean_flagged += 1
+        outcome = {"parse_error": r["parse_error"],
+                   "intervened": a2_clean_intervened(r, dialogue)}
+        _record_a2_clean(result, outcome)
+        if checkpoint and not r["parse_error"]:
+            checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     if ledger:
         result.tokens = ledger.total_tokens(include_cached=False) - tokens_before
@@ -523,12 +629,14 @@ def compare_arms(
     metric: str = "blocked",
     tie_rule: str = "exclude",
     trace: Any = None,
+    checkpoint: Any = None,
 ) -> Dict[str, Any]:
     """对比两个臂在同一数据上的 L3 统计。
 
     Args:
         metric: "blocked"（默认，最严格门禁指标）| "detected"（检出指标）| "clean"（干净样本未被标记）
         tie_rule: 平局处理 —— "exclude"（排除出胜率分母）| "count_half"（各计 0.5）
+        checkpoint: 可选 ItemCheckpoint；已完成的配对样本复用上次结果
 
     Returns:
         包含两个 ArmResult、win_rate 和 mcnemar 结果的字典
@@ -536,14 +644,17 @@ def compare_arms(
     if metric not in ("blocked", "detected", "clean", "no_leak"):
         raise ValueError(f"未知 metric: {metric}")
 
+    stats = {"resumed": 0}
     # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
     outcomes_a = _collect_outcomes(
         arm_a, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_a}",
         ledger=ledger, metric=metric, trace=trace,
+        checkpoint=checkpoint, stats=stats,
     )
     outcomes_b = _collect_outcomes(
         arm_b, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_b}",
         ledger=ledger, metric=metric, trace=trace,
+        checkpoint=checkpoint, stats=stats,
     )
 
     # 两边长度一致（同一数据），outcomes 顺序 = defects + base
@@ -591,6 +702,7 @@ def compare_arms(
         },
         "significance": "显著" if mn.p_value < 0.05 else "不显著",
         "wilson_interpretation": wilson_note,
+        "resumed": stats["resumed"],
     }
 
 
@@ -598,6 +710,16 @@ def _set_arm(obj: Any, arm: str) -> None:
     setter = getattr(obj, "set_arm", None)
     if callable(setter):
         setter(arm)
+
+
+def _cmp_key(metric: str, arm: str, kind: str, dialogue: Dict[str, Any]) -> str:
+    """对比路径的断点键：指标也是变量，换指标必须重跑。"""
+    return f"cmp:{metric}:{arm}:{kind}:{dialogue_key(dialogue)}"
+
+
+def _bump_resumed(stats: Optional[Dict[str, int]]) -> None:
+    if stats is not None:
+        stats["resumed"] = stats.get("resumed", 0) + 1
 
 
 def _collect_outcomes(
@@ -611,6 +733,8 @@ def _collect_outcomes(
     ledger: Any,
     metric: str,
     trace: Any = None,
+    checkpoint: Any = None,
+    stats: Optional[Dict[str, int]] = None,
 ) -> List[bool]:
     """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome（True=好）。
 
@@ -624,7 +748,7 @@ def _collect_outcomes(
     if arm == A2:
         return _collect_outcomes_a2(
             base, defects, client=client, judge=judge, run_id=run_id,
-            metric=metric,
+            metric=metric, checkpoint=checkpoint, stats=stats,
         )
 
     _set_arm(client, arm)
@@ -646,22 +770,46 @@ def _collect_outcomes(
     # clean 指标只跑干净样本，避免把缺陷 outcome 混进来
     if metric != "clean":
         for record in defects:
+            ck_key = (_cmp_key(metric, arm, "defect", record["dialogue"])
+                      if checkpoint else "")
+            saved = checkpoint.get(ck_key) if checkpoint else None
+            if saved is not None:
+                outcomes.append(bool(saved.get("outcome")))
+                _bump_resumed(stats)
+                continue
+
             reference = base[record["base_index"]] if base else None
             r = runtime.run(record["dialogue"], reference=reference)
             judge_failed = _judge_failed(r)
             if metric == "detected":
-                outcomes.append(bool(r.issues or r.seen_issues) and not judge_failed)
+                outcome = bool(r.issues or r.seen_issues) and not judge_failed
             elif metric == "no_leak":
                 violations = (check_consistency(before=reference, after=r.dialogue)
                               if reference else [])
                 violations += check_coherence(r.dialogue, judge=leak_judge)
-                outcomes.append(not violations and not judge_failed)
+                outcome = not violations and not judge_failed
             else:  # blocked
-                outcomes.append(r.status == "fallback" and not judge_failed)
+                outcome = r.status == "fallback" and not judge_failed
+            outcomes.append(outcome)
+            # 判官故障是瞬时问题，不能写死进断点
+            if checkpoint and not judge_failed:
+                checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     for dialogue in base:
+        ck_key = (_cmp_key(metric, arm, "base", dialogue)
+                  if checkpoint else "")
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            outcomes.append(bool(saved.get("outcome")))
+            _bump_resumed(stats)
+            continue
+
         r = runtime.run(dialogue)
-        outcomes.append(not is_clean_intervention(r))
+        judge_failed = _judge_failed(r)
+        outcome = not is_clean_intervention(r)
+        outcomes.append(outcome)
+        if checkpoint and not judge_failed:
+            checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     return outcomes
 
@@ -674,6 +822,8 @@ def _collect_outcomes_a2(
     judge: Any = None,
     run_id: str,
     metric: str,
+    checkpoint: Any = None,
+    stats: Optional[Dict[str, int]] = None,
 ) -> List[bool]:
     """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。
 
@@ -702,16 +852,38 @@ def _collect_outcomes_a2(
         if leak_judge is None:
             raise ValueError("metric=no_leak 需要判官；请注入 judge 或在线 client")
         for record in defects:
+            ck_key = (_cmp_key(metric, A2, "defect", record["dialogue"])
+                      if checkpoint else "")
+            saved = checkpoint.get(ck_key) if checkpoint else None
+            if saved is not None:
+                outcomes.append(bool(saved.get("outcome")))
+                _bump_resumed(stats)
+                continue
+
             reference = base[record["base_index"]] if base else None
             r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_d")
             violations = (check_consistency(before=reference, after=r["dialogue"])
                           if reference else [])
             violations += check_coherence(r["dialogue"], judge=leak_judge)
-            outcomes.append(not r["parse_error"] and not violations)
+            outcome = not r["parse_error"] and not violations
+            outcomes.append(outcome)
+            if checkpoint and not r["parse_error"]:
+                checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     for dialogue in base:
+        ck_key = (_cmp_key(metric, A2, "base", dialogue)
+                  if checkpoint else "")
+        saved = checkpoint.get(ck_key) if checkpoint else None
+        if saved is not None:
+            outcomes.append(bool(saved.get("outcome")))
+            _bump_resumed(stats)
+            continue
+
         r = run_a2_dialogue(client, dialogue, run_id=run_id + "_c")
-        outcomes.append(not a2_clean_intervened(r, dialogue))
+        outcome = not a2_clean_intervened(r, dialogue)
+        outcomes.append(outcome)
+        if checkpoint and not r["parse_error"]:
+            checkpoint.mark(ck_key, "accepted", outcome=outcome)
 
     return outcomes
 
@@ -780,6 +952,8 @@ def main(argv=None) -> int:
                     help="执行档位：live 真实调用；replay 从 --cassette 离线回放")
     ap.add_argument("--cassette", default="",
                     help="cassette JSONL 路径：replay 档读取；live 档同时录制")
+    ap.add_argument("--checkpoint", default="",
+                    help="断点续跑 JSONL：已完成条目复用上次结果，不再调用模型")
     ap.add_argument("--input", default="",
                     help="干净对话 JSON 路径；默认 agent/fixtures/public/base_v1.json")
     ap.add_argument("--defects", default="",
@@ -884,6 +1058,7 @@ def main(argv=None) -> int:
         from ..runtime.trace import TraceWriter
 
         trace = TraceWriter(args.trace)
+    checkpoint = ItemCheckpoint(args.checkpoint) if args.checkpoint else None
 
     if args.compare:
         parts = [s.strip() for s in args.compare.split(",") if s.strip()]
@@ -899,7 +1074,8 @@ def main(argv=None) -> int:
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
                                ledger=ledger, metric=args.metric,
-                               tie_rule=args.tie_rule, trace=trace)
+                               tie_rule=args.tie_rule, trace=trace,
+                               checkpoint=checkpoint)
         uses_judge = args.metric == "no_leak" or any(
             arm in (A4, A4R) for arm in (arm_a, arm_b))
         payload["run"] = {
@@ -914,6 +1090,7 @@ def main(argv=None) -> int:
             "generated_at": stamp,
             "profile": args.profile,
             "cassette": args.cassette or None,
+            "checkpoint": args.checkpoint or None,
             "replayed_calls": getattr(client, "replayed", 0) if replay else 0,
         }
         # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
@@ -936,6 +1113,8 @@ def main(argv=None) -> int:
             trace.close()
         if client is not None and callable(getattr(client, "close", None)):
             client.close()
+        if checkpoint is not None:
+            checkpoint.close()
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(payload.get("wilson_interpretation", ""))
         print(f"  p={payload['mcnemar']['p_value']} ({payload['mcnemar']['method']}), "
@@ -974,13 +1153,16 @@ def main(argv=None) -> int:
 
     # 单臂评测路径
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
-                     run_id=f"ablation_{args.arm}_{stamp}", trace=trace)
+                     run_id=f"ablation_{args.arm}_{stamp}", trace=trace,
+                     checkpoint=checkpoint)
     if ledger:
         ledger.close()
     if trace:
         trace.close()
     if client is not None and callable(getattr(client, "close", None)):
         client.close()
+    if checkpoint is not None:
+        checkpoint.close()
 
     payload = result.to_dict()
     uses_judge = args.arm in (A4, A4R)
@@ -996,6 +1178,7 @@ def main(argv=None) -> int:
         "generated_at": stamp,
         "profile": args.profile,
         "cassette": args.cassette or None,
+        "checkpoint": args.checkpoint or None,
         "replayed_calls": getattr(client, "replayed", 0) if replay else 0,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
