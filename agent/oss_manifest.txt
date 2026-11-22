@@ -18,6 +18,7 @@ benchmark/l3_stats.py
 benchmark/run.py
 benchmark/agent_eval.py
 benchmark/manifest.py
+benchmark/provenance.py
 benchmark/report.py
 benchmark/baseline/baseline_lock.json
 benchmark/baseline/lock_changelog.md
@@ -68,6 +69,7 @@ tests/test_fixture_split.py
 tests/test_rewrite_segment.py
 tests/test_repair_loop.py
 tests/test_report.py
+tests/test_provenance.py
 tests/test_budget.py
 tests/test_config.py
 tests/test_ledger.py

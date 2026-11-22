@@ -43,6 +43,7 @@ from ..tools.rewrite_segment import REWRITE_SEGMENT, make_rewrite_segment
 from .defects import drop_skipped
 from .fingerprint import evaluator_fingerprint, input_fingerprint
 from .manifest import build_manifest, write_manifest
+from .provenance import model_provenance
 from .report import write_review_markdown
 
 A2 = "A2"
@@ -824,7 +825,8 @@ def main(argv=None) -> int:
     has_online = any(arm != A3 for arm in need_live)
 
     client = ledger = None
-    model_name = judge_model_name = None
+    judge_model_name = None
+    generate_info = judge_info = None
     if has_online:
         if not args.live:
             print(f"[ERROR] 包含在线臂，需要 --live（会消耗 token）", file=sys.stderr)
@@ -844,9 +846,12 @@ def main(argv=None) -> int:
         ledger_dir.mkdir(parents=True, exist_ok=True)
         tag = args.compare.replace(",", "_") if args.compare else args.arm
         ledger = TokenLedger(ledger_dir / f"ledger_{tag}_{stamp_for_ledger}.jsonl")
+        judge_cfg = judge_settings()
         client = build_stage_clients(ledger=ledger)
-        model_name = settings.model
-        judge_model_name = judge_settings().model
+        judge_model_name = judge_cfg.model
+        # 跨机器（公司 / 本地）模型可能同名不同权重，必须记录接入点与 digest
+        generate_info = model_provenance(settings)
+        judge_info = model_provenance(judge_cfg)
 
     # 每次运行的账本标识必须唯一，否则多次尝试会混进同一 run_id
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
@@ -880,6 +885,8 @@ def main(argv=None) -> int:
             "n_defects": len(defects),
             "n_base": len(base),
             "a2_temperature": A2_TEMPERATURE if A2 in (arm_a, arm_b) else None,
+            "models": {"generate": generate_info,
+                       "judge": judge_info if uses_judge else None},
             "generated_at": stamp,
         }
         # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
@@ -915,14 +922,18 @@ def main(argv=None) -> int:
                     root=root,
                     profile="compare",
                     arms=[arm_a, arm_b],
-                    models={"generate": model_name,
-                            "judge": judge_model_name if uses_judge else None},
+                    models={"generate": generate_info,
+                            "judge": judge_info if uses_judge else None},
                     extra={"limit": args.limit, "limit_base": args.limit_base,
                            "data_mode": "observational" if defects_path is None else "defects",
                            "n_defects": len(defects),
                            "n_base": len(base), "metric": args.metric,
                            "tie_rule": args.tie_rule,
                            "a2_temperature": A2_TEMPERATURE if A2 in (arm_a, arm_b) else None,
+                           "rules_version": RULES_VERSION,
+                           "judge_prompt_version": JUDGE_VERSION if uses_judge else None,
+                           "rubric_version": RUBRIC_VERSION if uses_judge else None,
+                           "judge_temperature": 0.0 if uses_judge else None,
                            "compare": [arm_a, arm_b]},
                 ),
                 out.parent / f"manifest_{arm_a}_vs_{arm_b}.json",
@@ -951,6 +962,8 @@ def main(argv=None) -> int:
         "n_defects": len(defects),
         "n_base": len(base),
         "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None,
+        "models": {"generate": generate_info,
+                   "judge": judge_info if uses_judge else None},
         "generated_at": stamp,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
@@ -977,12 +990,16 @@ def main(argv=None) -> int:
                 root=root,
                 profile="ablation",
                 arms=[args.arm],
-                models={"generate": model_name,
-                        "judge": judge_model_name if args.arm in (A4, A4R) else None},
+                models={"generate": generate_info,
+                        "judge": judge_info if args.arm in (A4, A4R) else None},
                 extra={"limit": args.limit, "limit_base": args.limit_base,
                        "data_mode": "observational" if defects_path is None else "defects",
                        "n_defects": len(defects), "n_base": len(base),
-                       "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None},
+                       "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None,
+                       "rules_version": RULES_VERSION,
+                       "judge_prompt_version": JUDGE_VERSION if uses_judge else None,
+                       "rubric_version": RUBRIC_VERSION if uses_judge else None,
+                       "judge_temperature": 0.0 if uses_judge else None},
             ),
             out.parent / f"manifest_{args.arm}.json",
         )
