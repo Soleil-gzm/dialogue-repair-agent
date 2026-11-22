@@ -188,6 +188,46 @@ def model_notes(models: Dict[str, Any]) -> List[str]:
     return lines
 
 
+DEGRADATION_LABELS = {
+    "length_ratio": "长度比",
+    "distinct_2": "distinct-2",
+    "cross_sample_4gram": "跨样本 4-gram",
+}
+
+
+def _fmt_optional(value: Any, digits: int = 4) -> str:
+    return "N/A" if value is None else f"{float(value):.{digits}f}"
+
+
+def degradation_rows(arms: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把各臂的退化指标摊平成表格行；没跑过的臂不占一行。"""
+    rows = []
+    for arm in arms:
+        deg = arm.get("degradation") or {}
+        if not deg.get("n_samples"):
+            continue
+        length = deg.get("length_ratio") or {}
+        distinct = deg.get("distinct_2") or {}
+        repeat = deg.get("cross_sample_4gram") or {}
+        failed = [
+            DEGRADATION_LABELS[key]
+            for key in DEGRADATION_LABELS
+            if (deg.get(key) or {}).get("verdict") == "fail"
+        ]
+        rows.append({
+            "arm": arm["arm"],
+            "n_samples": int(deg.get("n_samples") or 0),
+            "length": _fmt_optional(length.get("ratio"), 3),
+            "length_verdict": length.get("verdict", "n/a"),
+            "distinct2": _fmt_optional(distinct.get("change")),
+            "distinct_verdict": distinct.get("verdict", "n/a"),
+            "repeat4": _fmt_optional(repeat.get("change")),
+            "repeat_verdict": repeat.get("verdict", "n/a"),
+            "failed": failed,
+        })
+    return rows
+
+
 def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]],
               manifests: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
     defect_types = []
@@ -298,6 +338,13 @@ def _conclusions(arms: List[Dict[str, Any]], recall: Dict[str, Dict[str, float]]
             out.append(
                 f"{arm['arm']} 有 {arm['judge_error']} 条判官故障样本，"
                 f"故障率 {arm.get('judge_error_rate', 0):.1%}，本轮结果{verdict}。")
+        deg = arm.get("degradation") or {}
+        if deg.get("degraded"):
+            failed = [DEGRADATION_LABELS[k] for k in DEGRADATION_LABELS
+                      if (deg.get(k) or {}).get("verdict") == "fail"]
+            out.append(
+                f"{arm['arm']} 退化指标不达标：{'、'.join(failed)}（样本 "
+                f"{deg.get('n_samples', 0)} 条）。")
     return out
 
 
@@ -508,6 +555,26 @@ def render_markdown(report: Dict[str, Any]) -> str:
 
     debug_note = "（调试抽样，勿作为完整数据集结论）" if meta["dataset"].get("debug") else ""
     models = meta.get("models") or {}
+    deg = degradation_rows(arms)
+    deg_block: List[str] = []
+    if deg:
+        deg_block = [
+            "## 退化指标",
+            "",
+            "| 臂 | 样本 | 长度比 | distinct-2 变化 | 跨样本 4-gram 变化 | 判定 |",
+            "|---|---|---|---|---|---|",
+            *[
+                f"| {r['arm']} | {r['n_samples']} | {r['length']}（{r['length_verdict']}） "
+                f"| {r['distinct2']}（{r['distinct_verdict']}） "
+                f"| {r['repeat4']}（{r['repeat_verdict']}） "
+                f"| {'退化' if r['failed'] else '通过'} |"
+                for r in deg
+            ],
+            "",
+            "> 只统计本轮实际执行的样本；阈值：长度比 0.8–1.3，distinct-2 降幅 ≤5%，"
+            "跨样本 4-gram 升幅 ≤5%。",
+            "",
+        ]
     lines = [
         f"# {meta['title']}",
         "",
@@ -521,6 +588,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
         "",
         *head, *rows,
         "",
+        *deg_block,
         "## 结论",
         "",
         *[f"{i + 1}. {c}" for i, c in enumerate(report["conclusions"])],
@@ -572,6 +640,24 @@ def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: s
             f"<td>{arm.get('tokens', 0):,}</td><td>¥{arm.get('cost_cny', 0):.2f}</td></tr>")
 
     conclusions = "".join(f"<li>{html_escape(c)}</li>" for c in report["conclusions"])
+    deg = degradation_rows(arms)
+    degradation_block = ""
+    if deg:
+        deg_body = "".join(
+            f"<tr><td><b>{html_escape(r['arm'])}</b></td><td>{r['n_samples']}</td>"
+            f"<td>{r['length']}（{r['length_verdict']}）</td>"
+            f"<td>{r['distinct2']}（{r['distinct_verdict']}）</td>"
+            f"<td>{r['repeat4']}（{r['repeat_verdict']}）</td>"
+            f"<td>{'退化' if r['failed'] else '通过'}</td></tr>"
+            for r in deg)
+        degradation_block = (
+            '<h2>4.1 退化指标</h2><div class="card"><table>'
+            '<thead><tr><th>臂</th><th>样本</th><th>长度比</th>'
+            '<th>distinct-2 变化</th><th>跨样本 4-gram 变化</th><th>判定</th>'
+            '</tr></thead>'
+            f'<tbody>{deg_body}</tbody></table>'
+            '<p class="muted">只统计本轮实际执行的样本；阈值：长度比 0.8–1.3，'
+            'distinct-2 降幅 ≤5%，跨样本 4-gram 升幅 ≤5%。</p></div>')
     limitations = "".join(
         f"<li>{html_escape(x)}</li>" for x in meta.get("limitations", []))
     limitations_block = (
@@ -630,6 +716,7 @@ pre{{background:#212529;color:#f8f9fa;padding:14px;border-radius:8px;overflow:au
 <div class="card"><table>
 <thead><tr><th>臂</th>{head_cells}<th>误报</th><th>macro</th><th>tokens</th><th>成本</th></tr></thead>
 <tbody>{''.join(body_rows)}</tbody></table></div>
+{degradation_block}
 
 <h2>5. 结论</h2>
 <div class="card"><ol>{conclusions}</ol></div>

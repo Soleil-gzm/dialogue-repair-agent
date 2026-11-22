@@ -188,6 +188,22 @@ class TestRender:
         assert "<script>alert(1)</script>" not in html
         assert "&lt;script&gt;" in html
 
+    def test_degradation_table_is_rendered(self):
+        arms = _arms()
+        arms[0]["degradation"] = {
+            "n_samples": 32,
+            "length_ratio": {"ratio": 1.5, "verdict": "fail"},
+            "distinct_2": {"change": -0.2, "verdict": "fail"},
+            "cross_sample_4gram": {"change": 0.1, "verdict": "fail"},
+            "degraded": True,
+        }
+        report = summarize(arms, [])
+        md = render_markdown(report)
+        assert "退化指标" in md and "1.500" in md and "退化" in md
+        html = render_html(report, "", "", trace_svg([]))
+        assert "退化指标" in html and "1.500" in html
+        assert "退化指标不达标" in " ".join(report["conclusions"])
+
 
 class TestModelNotes:
     MANIFEST = {"models": {
