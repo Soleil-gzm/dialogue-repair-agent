@@ -219,10 +219,11 @@ class WinRateResult:
     wins_b: int       # B 胜场数
     ties: int         # 平局数
     total: int        # 总样本数
-    point: float      # 胜率点估计 = wins_a / (wins_a + wins_b)
-    ci_lower: float   # Wilson 下界
-    ci_upper: float   # Wilson 上界
-    n_comparable: int # wins_a + wins_b（排除 ties 的分母）
+    # 全部平局时胜率不可比：point/ci 为 None，禁止用 0.0 伪装成"A 全输"
+    point: Optional[float]      # 胜率点估计
+    ci_lower: Optional[float]   # Wilson 下界
+    ci_upper: Optional[float]   # Wilson 上界
+    n_comparable: int # exclude 规则下为 wins_a + wins_b；count_half 下为 total
 
 
 def win_rate(
@@ -239,10 +240,12 @@ def win_rate(
         tie_rule: 平局处理方式 —— "exclude"（排除出分母，默认）或 "count_half"（各计 0.5）
 
     Returns:
-        WinRateResult
+        WinRateResult；exclude 下没有可比值（全平局）时 point/ci 为 None。
     """
     if len(outcomes_a) != len(outcomes_b):
         raise ValueError("长度必须相等")
+    if tie_rule not in ("exclude", "count_half"):
+        raise ValueError(f"未知 tie_rule: {tie_rule}")
 
     wins_a = wins_b = ties = 0
     for a, b in zip(outcomes_a, outcomes_b):
@@ -255,9 +258,27 @@ def win_rate(
         else:
             ties += 1
 
-    n_comparable = wins_a + wins_b
-    point, lo, hi = wilson_ci(wins_a, n_comparable)
+    if tie_rule == "count_half":
+        # 平局各记 0.5：分母为全部样本，点估计与区间都用等价的"半胜"计数
+        n_comparable = len(outcomes_a)
+        point, lo, hi = wilson_ci(wins_a + 0.5 * ties, n_comparable)
+        return WinRateResult(
+            wins_a=wins_a, wins_b=wins_b, ties=ties,
+            total=len(outcomes_a),
+            point=point, ci_lower=lo, ci_upper=hi,
+            n_comparable=n_comparable,
+        )
 
+    n_comparable = wins_a + wins_b
+    if n_comparable == 0:
+        # 完全没有胜负可分：胜率不存在，不能返回 0.0
+        return WinRateResult(
+            wins_a=wins_a, wins_b=wins_b, ties=ties,
+            total=len(outcomes_a),
+            point=None, ci_lower=None, ci_upper=None,
+            n_comparable=0,
+        )
+    point, lo, hi = wilson_ci(wins_a, n_comparable)
     return WinRateResult(
         wins_a=wins_a, wins_b=wins_b, ties=ties,
         total=len(outcomes_a),

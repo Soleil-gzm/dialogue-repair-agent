@@ -287,6 +287,38 @@ class TestL3Stats:
         assert 0.0 <= mn.p_value <= 1.0
         assert mn.p_value < 0.05
 
+    def test_win_rate_all_ties_is_not_zero(self):
+        """全平局时胜率不可比：不能返回 0.0 伪装成'A 全输'。"""
+        from agent.benchmark.l3_stats import win_rate
+
+        wr = win_rate([True, False, True], [True, False, True])
+        assert wr.ties == 3
+        assert wr.n_comparable == 0
+        assert wr.point is None
+        assert wr.ci_lower is None and wr.ci_upper is None
+
+    def test_win_rate_exclude_uses_decided_denominator(self):
+        from agent.benchmark.l3_stats import win_rate
+
+        wr = win_rate([True, False, True], [False, False, True])
+        assert wr.wins_a == 1 and wr.wins_b == 0 and wr.ties == 2
+        assert wr.n_comparable == 1
+        assert wr.point == 1.0
+
+    def test_win_rate_count_half_uses_all_samples(self):
+        from agent.benchmark.l3_stats import win_rate
+
+        wr = win_rate([True, False, True], [False, False, True], tie_rule="count_half")
+        assert wr.n_comparable == 3
+        # A 胜 1、平 2 → (1 + 1) / 3
+        assert wr.point == pytest.approx(2 / 3, abs=1e-6)
+
+    def test_win_rate_rejects_unknown_tie_rule(self):
+        from agent.benchmark.l3_stats import win_rate
+
+        with pytest.raises(ValueError):
+            win_rate([True], [True], tie_rule="nope")
+
 
 class _EchoA2Client:
     """A2 桩：把输入的对话原样（或按 mutate 改写后）回显。"""

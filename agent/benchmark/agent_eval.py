@@ -514,12 +514,14 @@ def compare_arms(
     run_id: str = "compare",
     ledger: Any = None,
     metric: str = "blocked",
+    tie_rule: str = "exclude",
     trace: Any = None,
 ) -> Dict[str, Any]:
     """对比两个臂在同一数据上的 L3 统计。
 
     Args:
         metric: "blocked"（默认，最严格门禁指标）| "detected"（检出指标）| "clean"（干净样本未被标记）
+        tie_rule: 平局处理 —— "exclude"（排除出胜率分母）| "count_half"（各计 0.5）
 
     Returns:
         包含两个 ArmResult、win_rate 和 mcnemar 结果的字典
@@ -545,12 +547,30 @@ def compare_arms(
         )
 
     from .l3_stats import win_rate, mcnemar
-    wr = win_rate(outcomes_a, outcomes_b)
+    wr = win_rate(outcomes_a, outcomes_b, tie_rule=tie_rule)
     mn = mcnemar(outcomes_a, outcomes_b)
+
+    if wr.point is None:
+        wilson_note = (
+            f"{arm_a} 对 {arm_b} 的 {metric} 全部为平局（{wr.ties} 条），"
+            "胜率不可比（N/A），不能解读为 0%"
+        )
+    else:
+        tie_note = (
+            f"平局各计 0.5，分母 {wr.n_comparable}"
+            if tie_rule == "count_half"
+            else f"排除 {wr.ties} 平局"
+        )
+        wilson_note = (
+            f"{arm_a} 对 {arm_b} 的 {metric} 胜率 Wilson 95% CI "
+            f"[{wr.ci_lower:.4f}, {wr.ci_upper:.4f}]，"
+            f"点估计 {wr.point:.4f}（{tie_note}）"
+        )
 
     return {
         "arms": [arm_a, arm_b],
         "metric": metric,
+        "tie_rule": tie_rule,
         "n_total": len(outcomes_a),
         "win_rate": {
             "wins": wr.wins_a, "losses": wr.wins_b, "ties": wr.ties,
@@ -563,11 +583,7 @@ def compare_arms(
             "n10": mn.n10, "n01": mn.n01, "n11": mn.n11, "n00": mn.n00,
         },
         "significance": "显著" if mn.p_value < 0.05 else "不显著",
-        "wilson_interpretation": (
-            f"{arm_a} 对 {arm_b} 的 {metric} 胜率 Wilson 95% CI "
-            f"[{wr.ci_lower:.4f}, {wr.ci_upper:.4f}]，"
-            f"点估计 {wr.point:.4f}（排除 {wr.ties} 平局）"
-        ),
+        "wilson_interpretation": wilson_note,
     }
 
 
@@ -757,6 +773,8 @@ def main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=0, help="每类最多取 N 条（调试用）")
     ap.add_argument("--metric", default="blocked", choices=["blocked", "detected", "clean", "no_leak"],
                     help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
+    ap.add_argument("--tie-rule", default="exclude", choices=["exclude", "count_half"],
+                    help="胜率平局处理：exclude 排除出分母（默认）或 count_half 各计 0.5")
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
     ap.add_argument("--trace", default="",
                     help="决策链 JSONL 输出路径；用于定位 policy_error / 循环等失败原因")
@@ -841,7 +859,8 @@ def main(argv=None) -> int:
 
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
-                               ledger=ledger, metric=args.metric, trace=trace)
+                               ledger=ledger, metric=args.metric,
+                               tie_rule=args.tie_rule, trace=trace)
         uses_judge = args.metric == "no_leak" or any(
             arm in (A4, A4R) for arm in (arm_a, arm_b))
         payload["run"] = {
@@ -889,6 +908,7 @@ def main(argv=None) -> int:
                            "data_mode": "observational" if defects_path is None else "defects",
                            "n_defects": len(defects),
                            "n_base": len(base), "metric": args.metric,
+                           "tie_rule": args.tie_rule,
                            "compare": [arm_a, arm_b]},
                 ),
                 out.parent / f"manifest_{arm_a}_vs_{arm_b}.json",
