@@ -14,7 +14,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-ARM_ORDER = ["A2", "A3", "A3L", "A3R", "A4", "A4R"]
+# A0 只用于复现冻结基线，不参与消融主链；列在这里只为排序稳定。
+ARM_ORDER = ["A0", "A2", "A3", "A3L", "A3R", "A4", "A4R"]
 
 # 宏观阻断率差值的"无变化"阈值，单位：百分点（pp）
 UNCHANGED_PP = 0.5
