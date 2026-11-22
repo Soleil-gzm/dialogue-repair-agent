@@ -43,6 +43,7 @@ from ..runtime.state import dialogue_key
 from ..tools import register_all
 from ..tools.rewrite_segment import REWRITE_SEGMENT, make_rewrite_segment
 from .defects import drop_skipped
+from .degradation import measure as measure_degradation
 from .fingerprint import evaluator_fingerprint, input_fingerprint
 from .manifest import build_manifest, write_manifest
 from .provenance import model_provenance
@@ -109,6 +110,8 @@ class ArmResult:
     elapsed_s: float = 0.0
     # 断点续跑跳过的条目数：这些条目沿用上次结果，本轮不产生任何调用
     resumed: int = 0
+    # 改写退化（长度比 / distinct-2 / 跨样本 4-gram）；只统计本轮实际执行的样本
+    degradation: Dict[str, Any] = field(default_factory=dict)
     # 已修复样本的原始对照，供 --review 导出人工抽检；不进入 to_dict
     samples: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -172,6 +175,7 @@ class ArmResult:
             "cost_cny": self.cost_cny,
             "elapsed_s": round(self.elapsed_s, 2),
             "resumed": self.resumed,
+            "degradation": self.degradation,
         }
 
 
@@ -473,6 +477,8 @@ def run_arm(
     tokens_before = ledger.total_tokens(include_cached=False) if ledger else 0
     cost_before = ledger.total_cost() if ledger else 0.0
     calls_before = ledger.n_calls(include_cached=False) if ledger else 0
+    deg_before: List[Dict[str, Any]] = []
+    deg_after: List[Dict[str, Any]] = []
 
     for record in defects:
         dtype = (record.get("defect") or {}).get("type") or "unknown"
@@ -492,6 +498,9 @@ def run_arm(
         reference = base[record["base_index"]] if base else None
         r = runtime.run(record["dialogue"], reference=reference)
         result.tokens += r.tokens
+        if r.dialogue and r.status not in ("failed", "stopped"):
+            deg_before.append(record["dialogue"])
+            deg_after.append(r.dialogue)
 
         outcome = _defect_outcome(r)
         _record_defect_outcome(result, row, outcome)
@@ -525,6 +534,9 @@ def run_arm(
 
         r = runtime.run(dialogue)
         result.tokens += r.tokens
+        if r.dialogue and r.status not in ("failed", "stopped"):
+            deg_before.append(dialogue)
+            deg_after.append(r.dialogue)
         outcome = _clean_outcome(r)
         _record_clean_outcome(result, outcome)
         if checkpoint and outcome["status"] in DONE_STATUSES:
@@ -535,6 +547,7 @@ def run_arm(
         result.cost_cny = round(ledger.total_cost() - cost_before, 8)
         result.calls = ledger.n_calls(include_cached=False) - calls_before
 
+    result.degradation = measure_degradation(deg_before, deg_after)
     result.elapsed_s = time.monotonic() - started
     return result
 
@@ -554,6 +567,8 @@ def _run_a2(
     tokens_before = ledger.total_tokens(include_cached=False) if ledger else 0
     cost_before = ledger.total_cost() if ledger else 0.0
     calls_before = ledger.n_calls(include_cached=False) if ledger else 0
+    deg_before: List[Dict[str, Any]] = []
+    deg_after: List[Dict[str, Any]] = []
 
     for record in defects:
         dtype = (record.get("defect") or {}).get("type") or "unknown"
@@ -576,6 +591,9 @@ def _run_a2(
 
         r = run_a2_dialogue(client, record["dialogue"], run_id=f"{run_id}_a2")
         result.tokens += r["tokens"]
+        if not r["parse_error"]:
+            deg_before.append(record["dialogue"])
+            deg_after.append(r["dialogue"])
 
         outcome = {"detected": bool(pre_violations),
                    "parse_error": r["parse_error"]}
@@ -596,6 +614,9 @@ def _run_a2(
 
         r = run_a2_dialogue(client, dialogue, run_id=f"{run_id}_a2c")
         result.tokens += r["tokens"]
+        if not r["parse_error"]:
+            deg_before.append(dialogue)
+            deg_after.append(r["dialogue"])
 
         outcome = {"parse_error": r["parse_error"],
                    "intervened": a2_clean_intervened(r, dialogue)}
@@ -608,6 +629,7 @@ def _run_a2(
         result.cost_cny = round(ledger.total_cost() - cost_before, 8)
         result.calls = ledger.n_calls(include_cached=False) - calls_before
 
+    result.degradation = measure_degradation(deg_before, deg_after)
     result.elapsed_s = time.monotonic() - started
     return result
 
@@ -645,16 +667,18 @@ def compare_arms(
         raise ValueError(f"未知 metric: {metric}")
 
     stats = {"resumed": 0}
+    texts_a: Dict[str, List[Dict[str, Any]]] = {"before": [], "after": []}
+    texts_b: Dict[str, List[Dict[str, Any]]] = {"before": [], "after": []}
     # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
     outcomes_a = _collect_outcomes(
         arm_a, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_a}",
         ledger=ledger, metric=metric, trace=trace,
-        checkpoint=checkpoint, stats=stats,
+        checkpoint=checkpoint, stats=stats, texts=texts_a,
     )
     outcomes_b = _collect_outcomes(
         arm_b, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_b}",
         ledger=ledger, metric=metric, trace=trace,
-        checkpoint=checkpoint, stats=stats,
+        checkpoint=checkpoint, stats=stats, texts=texts_b,
     )
 
     # 两边长度一致（同一数据），outcomes 顺序 = defects + base
@@ -703,6 +727,11 @@ def compare_arms(
         "significance": "显著" if mn.p_value < 0.05 else "不显著",
         "wilson_interpretation": wilson_note,
         "resumed": stats["resumed"],
+        # 退化指标只覆盖本轮实际执行的样本；n_samples 会写明样本量
+        "degradation": {
+            arm_a: measure_degradation(texts_a["before"], texts_a["after"]),
+            arm_b: measure_degradation(texts_b["before"], texts_b["after"]),
+        },
     }
 
 
@@ -735,6 +764,7 @@ def _collect_outcomes(
     trace: Any = None,
     checkpoint: Any = None,
     stats: Optional[Dict[str, int]] = None,
+    texts: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[bool]:
     """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome（True=好）。
 
@@ -748,7 +778,7 @@ def _collect_outcomes(
     if arm == A2:
         return _collect_outcomes_a2(
             base, defects, client=client, judge=judge, run_id=run_id,
-            metric=metric, checkpoint=checkpoint, stats=stats,
+            metric=metric, checkpoint=checkpoint, stats=stats, texts=texts,
         )
 
     _set_arm(client, arm)
@@ -780,6 +810,9 @@ def _collect_outcomes(
 
             reference = base[record["base_index"]] if base else None
             r = runtime.run(record["dialogue"], reference=reference)
+            if texts is not None and r.dialogue and r.status not in ("failed", "stopped"):
+                texts["before"].append(record["dialogue"])
+                texts["after"].append(r.dialogue)
             judge_failed = _judge_failed(r)
             if metric == "detected":
                 outcome = bool(r.issues or r.seen_issues) and not judge_failed
@@ -805,6 +838,9 @@ def _collect_outcomes(
             continue
 
         r = runtime.run(dialogue)
+        if texts is not None and r.dialogue and r.status not in ("failed", "stopped"):
+            texts["before"].append(dialogue)
+            texts["after"].append(r.dialogue)
         judge_failed = _judge_failed(r)
         outcome = not is_clean_intervention(r)
         outcomes.append(outcome)
@@ -824,6 +860,7 @@ def _collect_outcomes_a2(
     metric: str,
     checkpoint: Any = None,
     stats: Optional[Dict[str, int]] = None,
+    texts: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[bool]:
     """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。
 
@@ -862,6 +899,9 @@ def _collect_outcomes_a2(
 
             reference = base[record["base_index"]] if base else None
             r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_d")
+            if texts is not None and not r["parse_error"]:
+                texts["before"].append(record["dialogue"])
+                texts["after"].append(r["dialogue"])
             violations = (check_consistency(before=reference, after=r["dialogue"])
                           if reference else [])
             violations += check_coherence(r["dialogue"], judge=leak_judge)
@@ -880,6 +920,9 @@ def _collect_outcomes_a2(
             continue
 
         r = run_a2_dialogue(client, dialogue, run_id=run_id + "_c")
+        if texts is not None and not r["parse_error"]:
+            texts["before"].append(dialogue)
+            texts["after"].append(r["dialogue"])
         outcome = not a2_clean_intervened(r, dialogue)
         outcomes.append(outcome)
         if checkpoint and not r["parse_error"]:
