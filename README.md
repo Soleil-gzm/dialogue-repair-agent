@@ -181,7 +181,11 @@ agent/
 
 ---
 
-## 消融结果（`deepseek-flash`，120 条缺陷 + 12 条干净对话）
+## 消融结果（历史运行：DeepSeek API，模型标注 `deepseek-flash`）
+
+> **溯源说明**：下表是历史运行产物，模型标注为当时的 `deepseek-flash`；当前代码默认模型是
+> `deepseek-chat`（见 `agent/runtime/config.py`）。两者不可混读，表中的数字不能用于描述当前默认配置。
+> 正式结论以带 manifest/fingerprint 的结果文件为准；本地 Ollama 重跑后的新表会替换本表并附产物出处。
 
 复现命令：
 
