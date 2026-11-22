@@ -5,8 +5,8 @@ import json
 import pytest
 
 from agent.benchmark.report import (
-    ablation_svg, heatmap_svg, load_arms, load_trace, render_html,
-    render_markdown, summarize, trace_svg,
+    ablation_svg, collect_models, heatmap_svg, load_arms, load_trace, model_notes,
+    render_html, render_markdown, summarize, trace_svg,
 )
 
 
@@ -172,6 +172,50 @@ class TestRender:
         html = render_html(report, "", "", trace_svg([]))
         assert "<script>alert(1)</script>" not in html
         assert "&lt;script&gt;" in html
+
+
+class TestModelNotes:
+    MANIFEST = {"models": {
+        "generate": {
+            "model": "qwen3:8b", "provider": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1", "temperature": 0.0,
+            "ollama": {"found": True, "digest": "sha256:abcdef0123456789",
+                       "size": 5_200_000_000,
+                       "details": {"quantization_level": "Q4_K_M"}},
+        },
+        "judge": None,
+    }}
+
+    def test_manifest_models_reach_markdown_and_html(self):
+        report = summarize(_arms(), [], [self.MANIFEST])
+        assert report["meta"]["models"]["generate"][0]["model"] == "qwen3:8b"
+        md = render_markdown(report)
+        assert "生成模型：qwen3:8b" in md
+        assert "digest sha256:abcdef012345" in md
+        assert "Q4_K_M" in md
+        html = render_html(report, "", "", trace_svg([]))
+        assert "qwen3:8b" in html and "Q4_K_M" in html
+
+    def test_duplicate_manifests_are_deduplicated(self):
+        models = collect_models([self.MANIFEST, self.MANIFEST])
+        assert len(models["generate"]) == 1
+        assert models["mixed"] is False
+
+    def test_different_digests_are_flagged(self):
+        other = {"models": {"generate": {
+            "model": "qwen3:8b", "provider": "ollama",
+            "ollama": {"found": True, "digest": "sha256:ffffffffffffffff"},
+        }}}
+        models = collect_models([self.MANIFEST, other])
+        assert models["mixed"] is True
+        assert any("跨模型混合" in x for x in model_notes(models))
+
+    def test_unreachable_ollama_is_surfaced(self):
+        notes = model_notes({"generate": [{
+            "model": "qwen3:8b", "provider": "ollama",
+            "ollama": {"found": False, "error": "URLError: refused"},
+        }]})
+        assert any("溯源失败" in x for x in notes)
 
 
 class TestCorrections:

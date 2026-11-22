@@ -110,6 +110,62 @@ def load_manifests(paths: Sequence[Path]) -> List[Dict[str, Any]]:
     return out
 
 
+def collect_models(manifests: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, Any]:
+    """汇总 manifest 里的模型溯源；同名不同 digest 视为不一致。"""
+    rows: Dict[str, Any] = {"generate": [], "judge": []}
+    seen = set()
+    for m in manifests or []:
+        models = m.get("models") or {}
+        for role in ("generate", "judge"):
+            info = models.get(role)
+            if not info:
+                continue
+            key = json.dumps(info, ensure_ascii=False, sort_keys=True)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows[role].append(info)
+    rows["mixed"] = any(len(rows[r]) > 1 for r in ("generate", "judge"))
+    return rows
+
+
+def describe_model(info: Any) -> str:
+    """把一条模型溯源渲染成单行，供报告头部展示。"""
+    if not isinstance(info, dict):
+        return str(info)
+    parts = [str(info.get("model") or "?")]
+    if info.get("provider"):
+        parts.append(str(info["provider"]))
+    if info.get("base_url"):
+        parts.append(str(info["base_url"]))
+    if info.get("temperature") is not None:
+        parts.append(f"T={info['temperature']}")
+    ollama = info.get("ollama") or {}
+    if ollama.get("found"):
+        digest = str(ollama.get("digest") or "")
+        if digest:
+            parts.append("digest " + digest[:19])
+        quant = (ollama.get("details") or {}).get("quantization_level")
+        if quant:
+            parts.append(str(quant))
+        if ollama.get("size"):
+            parts.append(f"{int(ollama['size']) / 1e9:.1f}GB")
+    elif ollama.get("error"):
+        parts.append(f"ollama 溯源失败: {ollama['error']}")
+    return " · ".join(parts)
+
+
+def model_notes(models: Dict[str, Any]) -> List[str]:
+    lines = []
+    for role, label in (("generate", "生成模型"), ("judge", "判官模型")):
+        infos = models.get(role) or []
+        if infos:
+            lines.append(f"{label}：" + "；".join(describe_model(i) for i in infos))
+    if models.get("mixed"):
+        lines.append("多份 manifest 的模型不一致，结果跨模型混合，横向比较需谨慎。")
+    return lines
+
+
 def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]],
               manifests: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
     defect_types = []
@@ -143,6 +199,7 @@ def summarize(arms: List[Dict[str, Any]], trace: List[Dict[str, Any]],
             "dataset": dataset,
             "defect_types": defect_types,
             "defect_labels": {t: DEFECT_LABELS.get(t, t) for t in defect_types},
+            "models": collect_models(manifests),
             "trace_events": len(trace),
             "limitations": _limitations(arms, dataset),
         },
@@ -428,6 +485,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
             + f" | ¥{arm.get('cost_cny', 0):.2f} |")
 
     debug_note = "（调试抽样，勿作为完整数据集结论）" if meta["dataset"].get("debug") else ""
+    models = meta.get("models") or {}
     lines = [
         f"# {meta['title']}",
         "",
@@ -437,6 +495,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
         "- 指标：`blocked` = 检出并回退原文；`干净样本干预率` = 干净样本被回退、"
         "异常中断或预算中止的占比",
         "- 数据与成本均来自 append-only token 账本",
+        *[f"- {x}" for x in model_notes(models)],
         "",
         *head, *rows,
         "",
@@ -506,6 +565,8 @@ def render_html(report: Dict[str, Any], ablation: str, heatmap: str, timeline: s
             "<h2>5.1 数据修正说明</h2><div class=\"card\"><ul>"
             + "".join(f"<li>{html_escape(n)}</li>" for n in notes)
             + "</ul></div>")
+    model_html = "".join(
+        f"<br>{html_escape(x)}" for x in model_notes(meta.get("models") or {}))
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -530,7 +591,7 @@ pre{{background:#212529;color:#f8f9fa;padding:14px;border-radius:8px;overflow:au
 <h1>{html_escape(meta['title'])}</h1>
 <p class="muted">缺陷集 {meta['dataset']['n_defects']} 条（{len(defects)} 类 × {meta['dataset']['per_type']}）
 · 干净样本 {meta['dataset']['n_clean']} 条 · 指标口径：blocked = 检出并回退原文
-{('· <b>调试抽样，勿作为完整数据集结论</b>' if meta['dataset'].get('debug') else '')}</p>
+{('· <b>调试抽样，勿作为完整数据集结论</b>' if meta['dataset'].get('debug') else '')}{model_html}</p>
 <p class="lead">目标不是"感觉改得更顺了"，而是在固定缺陷集上量化"能不能发现问题、能不能挡住问题、花多少钱"。</p>
 
 <h2>1. 消融：效果与成本</h2>
