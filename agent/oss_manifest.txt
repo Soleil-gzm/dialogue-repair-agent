@@ -48,6 +48,7 @@ runtime/trace.py
 runtime/policy.py
 runtime/loop.py
 runtime/checkpoint.py
+runtime/cassette.py
 fixtures/public/base_v1.json
 fixtures/public/dev_v1.json
 fixtures/public/test_v1.json
@@ -86,6 +87,7 @@ tests/test_policy_rule.py
 tests/test_policy_llm.py
 tests/test_loop.py
 tests/test_checkpoint.py
+tests/test_cassette.py
 tests/benchmark/__init__.py
 tests/benchmark/test_arms.py
 tests/benchmark/test_canonical.py
