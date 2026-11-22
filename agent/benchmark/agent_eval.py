@@ -77,6 +77,9 @@ system 消息绝对不能修改。user 消息绝对不能修改。只改 assista
 
 如果对话没问题，原样返回即可。"""
 
+# A2 单次重写的采样温度：固定值便于复现，并写入 run/manifest 供追溯
+A2_TEMPERATURE = 0.3
+
 
 @dataclass
 class ArmResult:
@@ -266,7 +269,8 @@ def _runtime(policy, budget: Optional[Budget] = None, trace: Any = None):
 
 def run_a2_dialogue(client: Any, dialogue: Dict[str, Any],
                     run_id: str = "a2",
-                    reference: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                    reference: Optional[Dict[str, Any]] = None,
+                    temperature: float = A2_TEMPERATURE) -> Dict[str, Any]:
     """A2 单次 LLM 重写——一次 chat，无条件接受结果。
 
     Returns:
@@ -278,7 +282,7 @@ def run_a2_dialogue(client: Any, dialogue: Dict[str, Any],
     ]
     resp = client.chat(
         messages,
-        temperature=0.3,
+        temperature=temperature,
         max_tokens=2048,
         stage="generate",
         run_id=run_id,
@@ -869,6 +873,7 @@ def main(argv=None) -> int:
             "data_mode": "observational" if defects_path is None else "defects",
             "n_defects": len(defects),
             "n_base": len(base),
+            "a2_temperature": A2_TEMPERATURE if A2 in (arm_a, arm_b) else None,
             "generated_at": stamp,
         }
         # 对比结果同样必须可追溯：指纹 + manifest，避免不同尺子被混算
@@ -909,6 +914,7 @@ def main(argv=None) -> int:
                            "n_defects": len(defects),
                            "n_base": len(base), "metric": args.metric,
                            "tie_rule": args.tie_rule,
+                           "a2_temperature": A2_TEMPERATURE if A2 in (arm_a, arm_b) else None,
                            "compare": [arm_a, arm_b]},
                 ),
                 out.parent / f"manifest_{arm_a}_vs_{arm_b}.json",
@@ -934,6 +940,7 @@ def main(argv=None) -> int:
         "data_mode": "observational" if defects_path is None else "defects",
         "n_defects": len(defects),
         "n_base": len(base),
+        "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None,
         "generated_at": stamp,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）
@@ -964,7 +971,8 @@ def main(argv=None) -> int:
                         "judge": judge_model_name if args.arm in (A4, A4R) else None},
                 extra={"limit": args.limit, "limit_base": args.limit_base,
                        "data_mode": "observational" if defects_path is None else "defects",
-                       "n_defects": len(defects), "n_base": len(base)},
+                       "n_defects": len(defects), "n_base": len(base),
+                       "a2_temperature": A2_TEMPERATURE if args.arm == A2 else None},
             ),
             out.parent / f"manifest_{args.arm}.json",
         )

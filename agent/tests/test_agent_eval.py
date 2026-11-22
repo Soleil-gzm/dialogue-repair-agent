@@ -364,6 +364,21 @@ _D1_RECORD = {
 class TestA2Outcomes:
     """A2 的 outcome 必须按 metric 分流，不能所有指标都拿一致性凑数。"""
 
+    def test_temperature_comes_from_named_constant(self):
+        from agent.benchmark.agent_eval import A2_TEMPERATURE, run_a2_dialogue
+
+        class _Capture:
+            def chat(self, messages, **kwargs):
+                self.kwargs = kwargs
+                return LLMResponse(
+                    text=json.dumps(_CLEAN_DIALOGUE, ensure_ascii=False),
+                    input_tokens=1,
+                )
+
+        client = _Capture()
+        run_a2_dialogue(client, _CLEAN_DIALOGUE)
+        assert client.kwargs["temperature"] == A2_TEMPERATURE
+
     def test_blocked_is_always_false_for_defects(self):
         client = _EchoA2Client()
         out = _collect_outcomes_a2(
