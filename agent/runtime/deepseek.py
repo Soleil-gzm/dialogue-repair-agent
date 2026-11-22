@@ -72,6 +72,8 @@ class DeepSeekClient:
     # 进程内缓存：同一请求不重复付费
     cache: Dict[str, LLMResponse] = field(default_factory=dict)
     _seq: int = 0
+    # 复用一个连接池：批量评测时避免每次请求都重新握手
+    _client: Optional[httpx.Client] = field(default=None, init=False, repr=False)
 
     # ------------------------------------------------------------------ 初始化
     def __post_init__(self):
@@ -198,18 +200,28 @@ class DeepSeekClient:
     def _mentions_json(messages: List[Dict[str, str]]) -> bool:
         return any("json" in str(m.get("content", "")).lower() for m in messages)
 
+    def _http(self) -> httpx.Client:
+        """惰性创建并复用连接池；超时按单次请求传入，不重建客户端。"""
+        if self._client is None:
+            self._client = httpx.Client(
+                base_url=self.settings.base_url.rstrip("/"),
+                transport=self.transport,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+        return self._client
+
+    def close(self) -> None:
+        """释放连接池；评测 CLI 在结束时调用。"""
+        if self._client is not None:
+            self._client.close()
+            self._client = None
+
     def _post(self, payload: Dict[str, Any], timeout_s: Optional[float]) -> httpx.Response:
         timeout = self.settings.timeout_s if timeout_s is None else timeout_s
-        with httpx.Client(
-            base_url=self.settings.base_url.rstrip("/"),
-            timeout=timeout,
-            transport=self.transport,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-        ) as client:
-            resp = client.post("/chat/completions", json=payload)
+        resp = self._http().post("/chat/completions", json=payload, timeout=timeout)
         if resp.status_code >= 400:
             raise LLMHTTPError(resp.status_code, resp.text)
         return resp

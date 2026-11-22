@@ -76,6 +76,14 @@ class StageRoutedClient:
             if callable(setter):
                 setter(arm)
 
+    def close(self) -> None:
+        """关闭两个子客户端的连接池（同一对象时只关一次）。"""
+        for client in {id(self.generate_client): self.generate_client,
+                       id(self.judge_client): self.judge_client}.values():
+            closer = getattr(client, "close", None)
+            if callable(closer):
+                closer()
+
 
 class FakeLLMClient:
     """确定性假客户端。

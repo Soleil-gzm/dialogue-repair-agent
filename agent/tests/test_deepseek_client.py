@@ -41,6 +41,15 @@ def _ok(_request):
 
 
 class TestSuccessPath:
+    def test_reuses_single_http_client(self):
+        """批量评测不应每次请求都重建连接池。"""
+        c = _client(_ok)
+        first = c._http()
+        c.chat(PROMPT)
+        assert c._http() is first
+        c.close()
+        assert c._client is None
+
     def test_returns_text_and_usage(self):
         r = _client(_ok).chat(PROMPT)
         assert r.text == '{"ok": true}'

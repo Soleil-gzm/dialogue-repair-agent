@@ -900,6 +900,8 @@ def main(argv=None) -> int:
             ledger.close()
         if trace:
             trace.close()
+        if client is not None and callable(getattr(client, "close", None)):
+            client.close()
         text = json.dumps(payload, ensure_ascii=False, indent=2)
         print(payload.get("wilson_interpretation", ""))
         print(f"  p={payload['mcnemar']['p_value']} ({payload['mcnemar']['method']}), "
@@ -937,6 +939,8 @@ def main(argv=None) -> int:
         ledger.close()
     if trace:
         trace.close()
+    if client is not None and callable(getattr(client, "close", None)):
+        client.close()
 
     payload = result.to_dict()
     uses_judge = args.arm in (A4, A4R)
