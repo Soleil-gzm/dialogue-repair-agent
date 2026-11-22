@@ -8,7 +8,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 
 用 LLM Agent 修复模板拼接式对话的跨轮断裂问题，并用一套**可复现的评测体系**证明它有效。
 
-当前状态：`Sprint 0 ✅ / Sprint 1a ✅ / Sprint 1b 进行中`（M0–M4 完成，M5 作品集目录待补齐）—— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、
+当前状态：`Sprint 0 ✅ / Sprint 1a ✅ / Sprint 1b 进行中`（M0–M5 完成，作品集已发布）—— 已具备四元组基线指纹、不可变基线锁、可复现对照臂、
 五条保真约束 + `check_consistency`、连贯性检查 `check_coherence`（重复空转 / 退化轮次）、
 语义判官（D1 答非所问，可注入、prompt 版本化）、6 类程序化缺陷注入集、
 决策循环（预算 / 死循环保护 / Trace）与两种可消融的决策策略（规则型 / LLM function calling）、
@@ -292,7 +292,7 @@ python -m agent.benchmark.report --results $dir --out "$dir/report"
 
 ## 路线
 
-历史里程碑：`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ⬜（目录待补齐）`
+历史里程碑：`T0 测试地基 ✅ → T1 基线冻结 ✅ → M0 插件骨架 ✅ → M1 单工具 ✅ → M2 决策循环 ✅ → M3 真实调用 ✅ → M4 开源切片 ✅ → M5 作品集 ✅（已发布）`
 
 当前 Sprint（以 [改造路线图](agent/docs/decisions/改造路线图.md) 为准）：
 
@@ -307,9 +307,12 @@ python -m agent.benchmark.report --results $dir --out "$dir/report"
 | S2 | MCP Server、Docker、OpenTelemetry | ⬜ |
 | S3 | RAG 增强（当前仅 `A5-RAG` 命名占位） | ⬜ |
 
-作品集产物（三件套报告 + 图 + trace 样例）目标位置为 `portfolio/agent-augmentation/`：
-`benchmark_report.{html,md,json}`、`figures/*.svg`、`04_trace_sample.jsonl`、`05_before_after.md`。
-该目录当前尚未生成，不能作为已交付产物引用。
+作品集已发布为独立仓库 `portfolio/`，Agent 案例页为 `cases/agent/index.html`，
+配套产物在 `assets/agent/` 与 `assets/data/facts.json`。
+
+在线地址：https://soleil-gzm.github.io/portfolio/cases/agent/
+
+该目录由主仓库 `.gitignore` 忽略，单独提交与部署。
 
 ## 文档
 
