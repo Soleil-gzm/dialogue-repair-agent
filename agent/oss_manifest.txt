@@ -13,6 +13,8 @@ benchmark/fingerprint.py
 benchmark/lock.py
 benchmark/arms.py
 benchmark/fixtures.py
+benchmark/profiles.py
+benchmark/realistic.py
 benchmark/defects.py
 benchmark/l3_stats.py
 benchmark/run.py
@@ -49,6 +51,9 @@ runtime/checkpoint.py
 fixtures/public/base_v1.json
 fixtures/public/dev_v1.json
 fixtures/public/test_v1.json
+fixtures/public/realistic_v1.json
+fixtures/public/realistic_dev_v1.json
+fixtures/public/realistic_test_v1.json
 fixtures/public/defects_v1.jsonl
 tests/__init__.py
 tests/conftest.py
@@ -66,6 +71,7 @@ tests/test_consistency_metrics.py
 tests/test_defects.py
 tests/test_agent_eval.py
 tests/test_fixture_split.py
+tests/test_fixture_profile.py
 tests/test_rewrite_segment.py
 tests/test_repair_loop.py
 tests/test_report.py

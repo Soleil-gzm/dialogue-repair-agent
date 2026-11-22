@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from ..runtime.state import dialogue_key
+from . import profiles
+from .realistic import generate_dialogues as _generate_realistic
 
 SCENARIOS = ["S1_咨询", "S2_催办", "S3_退换", "S4_投诉", "S5_回访"]
 PRODUCTS = ["示例产品甲", "示例产品乙", "示例产品丙"]
@@ -66,7 +68,12 @@ def make_dialogue(idx: int, n_turns: int, rng: random.Random) -> dict:
     return {"messages": messages}
 
 
-def generate_dialogues(n: int = 12, seed: int = 20261112) -> List[dict]:
+def generate_dialogues(n: int = 12, seed: int = 20261112,
+                       profile: str = profiles.PROFILE_V1) -> List[dict]:
+    if profile == profiles.PROFILE_REALISTIC:
+        return _generate_realistic(n, seed)
+    if profile != profiles.PROFILE_V1:
+        raise ValueError(f"未知 profile: {profile}")
     rng = random.Random(seed)
     out = []
     for i in range(n):
@@ -101,8 +108,8 @@ def _scene_of(dialogue: dict) -> str:
     return "unknown"
 
 
-def _turn_bucket(n_turns: int) -> str:
-    for lo, hi in TURN_BUCKETS:
+def _turn_bucket(n_turns: int, buckets=TURN_BUCKETS) -> str:
+    for lo, hi in buckets:
         if lo <= n_turns <= hi:
             return f"{lo}-{hi}"
     return "other"
@@ -118,14 +125,16 @@ def _has_loss(dialogue: dict) -> bool:
     return False
 
 
-def _stratum(dialogue: dict) -> Tuple[str, str, bool]:
+def _stratum(dialogue: dict, turn_buckets=TURN_BUCKETS) -> Tuple[str, str, bool]:
     msgs = dialogue.get("messages") or []
     n_turns = sum(1 for m in msgs if m.get("role") == "assistant")
-    return (_scene_of(dialogue), _turn_bucket(n_turns), _has_loss(dialogue))
+    return (_scene_of(dialogue), _turn_bucket(n_turns, turn_buckets),
+            _has_loss(dialogue))
 
 
 def split_dialogues(dialogues: List[dict], dev_n: int = DEV_N,
-                    test_n: int = TEST_N) -> Tuple[List[dict], List[dict]]:
+                    test_n: int = TEST_N,
+                    turn_buckets=TURN_BUCKETS) -> Tuple[List[dict], List[dict]]:
     """按「场景 × 轮次桶 × 是否有 loss」分层切分，层内按内容哈希稳定排序。
 
     单例层直接归 test，保证测试集覆盖每层；其余层用最大余数法分配，
@@ -142,7 +151,7 @@ def split_dialogues(dialogues: List[dict], dev_n: int = DEV_N,
 
     groups: Dict[Tuple[str, str, bool], List[dict]] = {}
     for d in items:
-        groups.setdefault(_stratum(d), []).append(d)
+        groups.setdefault(_stratum(d, turn_buckets), []).append(d)
     for group in groups.values():
         group.sort(key=dialogue_key)
 
@@ -186,36 +195,58 @@ def split_dialogues(dialogues: List[dict], dev_n: int = DEV_N,
 
 
 def generate_split(dev_n: int = DEV_N, test_n: int = TEST_N,
-                   seed: int = SPLIT_SEED) -> Tuple[List[dict], List[dict]]:
-    return split_dialogues(generate_dialogues(dev_n + test_n, seed), dev_n, test_n)
+                   seed: int = SPLIT_SEED,
+                   profile: str = profiles.PROFILE_V1) -> Tuple[List[dict], List[dict]]:
+    buckets = (profiles.REALISTIC_TURN_BUCKETS
+               if profile == profiles.PROFILE_REALISTIC else TURN_BUCKETS)
+    return split_dialogues(
+        generate_dialogues(dev_n + test_n, seed, profile=profile),
+        dev_n, test_n, turn_buckets=buckets)
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="agent.benchmark.fixtures")
-    ap.add_argument("--n", type=int, default=12)
-    ap.add_argument("--seed", type=int, default=20261112)
-    ap.add_argument("--out", default="agent/fixtures/public/base_v1.json")
+    ap.add_argument("--profile", choices=profiles.PROFILES,
+                    default=profiles.PROFILE_V1)
+    ap.add_argument("--n", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--out", default="")
     ap.add_argument("--dev-out", default="", help="dev 集输出路径；与 --test-out 一起启用分层切分")
     ap.add_argument("--test-out", default="", help="test 集输出路径")
-    ap.add_argument("--dev-n", type=int, default=DEV_N)
-    ap.add_argument("--test-n", type=int, default=TEST_N)
-    ap.add_argument("--split-seed", type=int, default=SPLIT_SEED)
+    ap.add_argument("--dev-n", type=int, default=None)
+    ap.add_argument("--test-n", type=int, default=None)
+    ap.add_argument("--split-seed", type=int, default=None)
     args = ap.parse_args(argv)
 
+    realistic = args.profile == profiles.PROFILE_REALISTIC
+    n = args.n if args.n is not None else (
+        profiles.REALISTIC_BASE_N if realistic else 12)
+    seed = args.seed if args.seed is not None else (
+        profiles.REALISTIC_BASE_SEED if realistic else 20261112)
+    dev_n = args.dev_n if args.dev_n is not None else (
+        profiles.REALISTIC_DEV_N if realistic else DEV_N)
+    test_n = args.test_n if args.test_n is not None else (
+        profiles.REALISTIC_TEST_N if realistic else TEST_N)
+    split_seed = args.split_seed if args.split_seed is not None else (
+        profiles.REALISTIC_SPLIT_SEED if realistic else SPLIT_SEED)
+    out = args.out or (
+        "agent/fixtures/public/realistic_v1.json" if realistic
+        else "agent/fixtures/public/base_v1.json")
+
     if args.dev_out or args.test_out:
-        dev, test = generate_split(args.dev_n, args.test_n, args.split_seed)
-        for data, out in ((dev, args.dev_out), (test, args.test_out)):
-            if not out:
+        dev, test = generate_split(dev_n, test_n, split_seed, profile=args.profile)
+        for data, path in ((dev, args.dev_out), (test, args.test_out)):
+            if not path:
                 continue
-            p = Path(out)
+            p = Path(path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
                          encoding="utf-8")
             print(f"[OK] {len(data)} 条 -> {p}")
         return 0
 
-    data = generate_dialogues(args.n, args.seed)
-    p = Path(args.out)
+    data = generate_dialogues(n, seed, profile=args.profile)
+    p = Path(out)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"[OK] {len(data)} 条 -> {p}")
