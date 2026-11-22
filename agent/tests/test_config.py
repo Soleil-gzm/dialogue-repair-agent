@@ -65,6 +65,19 @@ class TestLoadDotenv:
         import os
         assert os.environ["AGENT_TEST_KEY"] == "from_env"
 
+    def test_writes_to_passed_mapping_only(self, tmp_path, monkeypatch):
+        """传入 mapping 时不能偷偷写进程环境。"""
+        p = tmp_path / ".env"
+        p.write_text("AGENT_TEST_KEY=abc\n", encoding="utf-8")
+        monkeypatch.delenv("AGENT_TEST_KEY", raising=False)
+
+        env: dict = {}
+        load_dotenv(p, environ=env)
+        assert env["AGENT_TEST_KEY"] == "abc"
+
+        import os
+        assert "AGENT_TEST_KEY" not in os.environ
+
 
 class TestLLMSettings:
     def test_from_env_overrides_model_and_url(self):

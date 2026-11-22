@@ -11,7 +11,7 @@ import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, MutableMapping, Optional, Union
 
 _ENV_LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 
@@ -65,7 +65,7 @@ def load_dotenv(
     path: Union[str, Path, None] = ".env",
     *,
     override: bool = False,
-    environ: Optional[Mapping[str, str]] = None,
+    environ: Optional[MutableMapping[str, str]] = None,
 ) -> Dict[str, str]:
     """把 .env 载入环境变量。
 
@@ -79,10 +79,11 @@ def load_dotenv(
         return {}
 
     values = parse_dotenv(p.read_text(encoding="utf-8"))
-    env = os.environ if environ is None else environ
+    # 传入 mapping 时只写该 mapping，避免测试/嵌入方被进程环境副作用污染
+    env: MutableMapping[str, str] = os.environ if environ is None else environ
     for k, v in values.items():
         if override or not env.get(k):
-            os.environ[k] = v
+            env[k] = v
     return values
 
 
