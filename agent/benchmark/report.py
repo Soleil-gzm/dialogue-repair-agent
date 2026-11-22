@@ -113,6 +113,8 @@ def validate_fingerprints(arms: List[Dict[str, Any]]) -> None:
             if model and model != "none":
                 judge_models.add(str(model))
             evaluator.pop("judge_model", None)
+            # sha256 是包含 judge_model 的派生值；分项 sha 已足够校验尺子
+            evaluator.pop("sha256", None)
         seen[arm["arm"]] = _fingerprint_key(normalized)
     if len(set(seen.values())) > 1:
         raise ValueError("结果指纹不一致，不能合并: " + ", ".join(sorted(seen)))
@@ -140,7 +142,7 @@ def collect_models(manifests: Optional[Sequence[Dict[str, Any]]]) -> Dict[str, A
             info = models.get(role)
             if not info:
                 continue
-            key = json.dumps(info, ensure_ascii=False, sort_keys=True)
+            key = f"{role}:" + json.dumps(info, ensure_ascii=False, sort_keys=True)
             if key in seen:
                 continue
             seen.add(key)

@@ -104,8 +104,10 @@ class TestDatasetMeta:
 
     def test_arm_without_judge_can_join_judge_arm(self):
         a, b = _arm("A3"), _arm("A4")
-        a["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "none"}}
-        b["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "qwen3:8b"}}
+        a["fingerprint"] = {"evaluator": {
+            "rules": "v1", "judge_model": "none", "sha256": "aaa"}}
+        b["fingerprint"] = {"evaluator": {
+            "rules": "v1", "judge_model": "qwen3:8b", "sha256": "bbb"}}
         summarize([a, b], [])  # 不抛：是否使用判官是臂的属性
 
     def test_different_judge_models_are_rejected(self):
