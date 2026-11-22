@@ -102,6 +102,19 @@ class TestDatasetMeta:
         with pytest.raises(ValueError, match="指纹不一致"):
             summarize([a, b], [])
 
+    def test_arm_without_judge_can_join_judge_arm(self):
+        a, b = _arm("A3"), _arm("A4")
+        a["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "none"}}
+        b["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "qwen3:8b"}}
+        summarize([a, b], [])  # 不抛：是否使用判官是臂的属性
+
+    def test_different_judge_models_are_rejected(self):
+        a, b = _arm("A4"), _arm("A4R")
+        a["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "qwen3:8b"}}
+        b["fingerprint"] = {"evaluator": {"rules": "v1", "judge_model": "qwen2.5:7b"}}
+        with pytest.raises(ValueError, match="判官模型不一致"):
+            summarize([a, b], [])
+
     def test_limitations_are_rendered(self):
         report = summarize(_arms(), [])
         assert report["meta"]["limitations"]

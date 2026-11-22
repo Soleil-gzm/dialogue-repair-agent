@@ -89,15 +89,35 @@ def dataset_meta(arms: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def _fingerprint_key(fp: Dict[str, Any]) -> str:
+    return json.dumps(fp, ensure_ascii=False, sort_keys=True)
+
+
 def validate_fingerprints(arms: List[Dict[str, Any]]) -> None:
-    """合并多臂前校验指纹；不同 RULES/JUDGE 版本的结果不得静默混算。"""
+    """合并多臂前校验指纹；不同 RULES/JUDGE 版本的结果不得静默混算。
+
+    「是否使用判官」是臂的属性（A3 无判官、A4 有判官），因此允许
+    `judge_model` 在 `none` 与非空模型之间不同；但两个真实判官模型不同
+    仍视为换了尺子，拒绝混算。
+    """
     seen: Dict[str, str] = {}
+    judge_models = set()
     for arm in arms:
         fp = arm.get("fingerprint")
-        if fp:
-            seen[arm["arm"]] = json.dumps(fp, ensure_ascii=False, sort_keys=True)
+        if not fp:
+            continue
+        normalized = json.loads(json.dumps(fp))
+        evaluator = normalized.get("evaluator")
+        if isinstance(evaluator, dict):
+            model = evaluator.get("judge_model")
+            if model and model != "none":
+                judge_models.add(str(model))
+            evaluator.pop("judge_model", None)
+        seen[arm["arm"]] = _fingerprint_key(normalized)
     if len(set(seen.values())) > 1:
         raise ValueError("结果指纹不一致，不能合并: " + ", ".join(sorted(seen)))
+    if len(judge_models) > 1:
+        raise ValueError("判官模型不一致，不能合并: " + ", ".join(sorted(judge_models)))
 
 
 def load_manifests(paths: Sequence[Path]) -> List[Dict[str, Any]]:
