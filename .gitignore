@@ -19,3 +19,5 @@ dist/
 .env
 .env.local
 !.env.example
+# workbuddy 文件
+.workbuddy/
