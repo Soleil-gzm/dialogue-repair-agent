@@ -67,9 +67,39 @@ class TestDecide:
 
     def test_model_can_stop_with_reason(self, mini_dialogues):
         client = _StubClient({"text": "两个校验都通过，接受当前版本"})
-        dec = LLMPolicy(client).decide(_state(mini_dialogues[0]))
+        checks = [{"tool": "check_consistency", "ok": True},
+                  {"tool": "check_coherence", "ok": True}]
+        dec = LLMPolicy(client).decide(_state(mini_dialogues[0], history=checks))
         assert dec.action == ACTION_STOP
         assert "接受" in dec.reason
+
+    def test_stop_without_checks_forces_missing_check(self, mini_dialogues):
+        """模型跳过校验直接收尾，等于绕过判官；必须强制补齐。"""
+        from agent.runtime.trace import TraceWriter
+
+        trace = TraceWriter()
+        d = mini_dialogues[0]
+        client = _StubClient({"text": "已通过保真校验，现在进行连贯性校验"})
+        dec = LLMPolicy(client, trace=trace).decide(
+            _state(d, history=[{"tool": "check_consistency", "ok": True}]))
+        assert dec.action == ACTION_CALL_TOOL
+        assert dec.tool == "check_coherence"
+        assert dec.args == {"dialogue": d}
+        assert any(e["event"] == "guard_pending_check" for e in trace.records)
+
+    def test_stop_after_rewrite_forces_recheck(self, mini_dialogues):
+        """改写换掉了对话版本，收尾前必须重跑两项校验。"""
+        d = mini_dialogues[0]
+        history = [
+            {"tool": "check_consistency", "ok": True},
+            {"tool": "check_coherence", "ok": False},
+            {"tool": "rewrite_segment", "ok": True, "turn": 1},
+        ]
+        client = _StubClient({"text": "修复成功，结束"})
+        dec = LLMPolicy(client, allow_rewrite=True).decide(
+            _state(d, history=history))
+        assert dec.tool == "check_consistency"
+        assert dec.args == {"before": d, "after": d}
 
     def test_args_come_from_state_not_model(self, mini_dialogues):
         """模型给的参数不可信：它只负责选工具，参数由运行时注入。"""
@@ -104,8 +134,11 @@ class TestDecide:
         assert dec.args == {"dialogue": d, "turn": turn, "issues": issues}
 
     def test_reason_truncated(self, mini_dialogues):
+        checks = [{"tool": "check_consistency", "ok": True},
+                  {"tool": "check_coherence", "ok": True}]
         client = _StubClient({"text": "很长的理由" * 100})
-        dec = LLMPolicy(client).decide(_state(mini_dialogues[0]))
+        dec = LLMPolicy(client).decide(
+            _state(mini_dialogues[0], history=checks))
         assert len(dec.reason) <= 200
 
 

@@ -273,6 +273,16 @@ class LLMPolicy:
         reason = (resp.text or "").strip()
         if not reason:
             raise LLMPolicyError("模型既没有调用工具，也没有给出结束理由")
+        # 收尾闸门（b）：声明的校验契约没跑完就结束，等于绕过判官；
+        # 尤其改写成功后必须重跑两项校验，否则 accepted/repaired 无法证明。
+        pending = self._pending_check(state)
+        if pending:
+            self._trace({"event": "guard_pending_check",
+                         "key": state.key, "tool": pending})
+            return Decision(
+                ACTION_CALL_TOOL, pending, self._build_args(pending, state),
+                f"结束前必须完成 {pending}",
+            )
         # 收尾闸门（a）：还有未处理违规就结束，等于带病放行，强制转回退
         if state.issues and "fallback_keep" in self._tool_names() \
                 and "fallback_keep" not in state.called_tools():
@@ -289,6 +299,27 @@ class LLMPolicy:
     def _trace(self, payload: Dict[str, Any]) -> None:
         if self.trace is not None:
             self.trace.write(payload)
+
+    def _pending_check(self, state: Any) -> Optional[str]:
+        """当前对话版本上还没跑过的校验工具；有未处理违规时返回 None。
+
+        有违规时应交给回退闸门，而不是继续补校验。
+        """
+        if state.issues:
+            return None
+        history = list(state.history or [])
+        last_rewrite = max(
+            (i for i, h in enumerate(history) if h.get("tool") == "rewrite_segment"),
+            default=-1,
+        )
+        done = {
+            h.get("tool") for h in history[last_rewrite + 1:]
+            if h.get("tool") in CHECK_TOOLS
+        }
+        for tool in CHECK_TOOLS:
+            if tool not in done:
+                return tool
+        return None
 
     def _checks_satisfied(self, state: Any) -> bool:
         """当前对话版本上两个校验都跑过且都通过。"""
