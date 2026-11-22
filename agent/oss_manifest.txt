@@ -111,6 +111,7 @@ docs/notes/2026-11-19-效果验证与鲁棒性实验.md
 docs/notes/2026-11-19-全量代码审查.md
 docs/notes/2026-11-19-Ollama本地部署与远程调用.md
 docs/notes/2026-11-20-多轮场景跳转检测与改写设计.md
+docs/notes/2026-11-23-公开轨分布校准.md
 docs/reviews/2026-11-20-项目状态评估与代码审查.md
 
 # ---------- BUILD ----------

@@ -95,6 +95,14 @@ python -m agent.benchmark.fixtures \
   --dev-out agent/fixtures/public/dev_v1.json \
   --test-out agent/fixtures/public/test_v1.json
 
+# 生成分布校准档（只匹配私有轨聚合形状，默认仍是 v1）
+python -m agent.benchmark.fixtures --profile realistic
+
+# 生成 realistic dev / test 分层切分（40 + 80）
+python -m agent.benchmark.fixtures --profile realistic \
+  --dev-out agent/fixtures/public/realistic_dev_v1.json \
+  --test-out agent/fixtures/public/realistic_test_v1.json
+
 # 跑 A0 并复现冻结基线
 python -m agent.benchmark.run \
   --input agent/fixtures/public/base_v1.json \
@@ -106,6 +114,20 @@ python -m pytest
 
 离线路径零第三方依赖（仅标准库）；在线臂需要 `httpx` / `tenacity`。Python ≥ 3.10。
 完整命令与排障见 [部署与运行指南](agent/docs/guides/部署与运行指南.md)。
+
+### 分布校准档（realistic）
+
+`v1` 是冻结基线，不能静默改变。新增的 `realistic` 档只从私有轨的 1000 条对话中提取
+**聚合分布**（轮次直方图、去数字后的角色唯一率、对话内重复率、消息长度分位、实体密度），
+再用中立域话术重新生成公开数据；不复制任何原文、业务标签或客户信息。
+
+| 指标 | v1 base | realistic 校准跑（1000 条） | 私有轨目标 |
+|---|---:|---:|---:|
+| 轮次中位 / 均值 | 4 / 4.67 | 11 / 10.85 | 11 / 10.85 |
+| assistant / user 唯一率 | 10.7% / 21.4% | 49.3% / 28.3% | 49.5% / 28.5% |
+| system 长度 | 142 | 363–365 | 348–375 |
+
+方法与复现命令见 [公开轨分布校准](agent/docs/notes/2026-11-23-公开轨分布校准.md)。
 
 ---
 
@@ -120,6 +142,8 @@ agent/
 │   ├── manifest.py       运行清单（环境 / 命令 / 产物哈希，不参与判等）
 │   ├── arms.py           A0 恒等臂
 │   ├── fixtures.py       中立域程序化数据生成 + dev/test 分层切分
+│   ├── profiles.py       生成档位参数（v1 冻结 / realistic 分布校准）
+│   ├── realistic.py      按私有轨聚合分布生成公开数据
 │   ├── defects.py        6 类缺陷注入（答非所问/指代断裂/事实冲突/角色混淆/重复空转/缺失承接）
 │   ├── run.py            基线 CLI（A0 与 lock 校验）
 │   ├── agent_eval.py     Agent 臂评测 CLI（A3/A3L/A3R/A4/A4R：召回 / 误报 / 成本）
@@ -146,7 +170,7 @@ agent/
 │   ├── check_coherence.py    连贯性工具（默认离线，判官可注入）
 │   ├── fallback_keep.py      保底回退到原对话
 │   └── rewrite_segment.py    定位并重写指定轮次（A3R 专用）
-├── fixtures/public/      公开轨数据（base_v1 / dev_v1 / test_v1 / defects_v1）
+├── fixtures/public/      公开轨数据（base_v1 / dev_v1 / test_v1 / defects_v1 / realistic_*）
 ├── docs/
 │   ├── README.md         文档总索引
 │   ├── architecture/     架构设计 / 模块与接口 / Benchmark 评测设计
