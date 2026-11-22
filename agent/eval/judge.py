@@ -14,42 +14,44 @@
 """
 
 import json
+import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Protocol
+from typing import Any, Dict, Iterator, List, Protocol, Tuple
 
 from ..canonical import dialogue_key as _dialogue_key
 
 from .coherence import C3_OFF_TOPIC
 
-JUDGE_VERSION = "coherence-judge-v2"
-RUBRIC_VERSION = "2.0"
+JUDGE_VERSION = "coherence-judge-v3"
+RUBRIC_VERSION = "3.0"
 
 # 单条消息渲染上限：判官只需判断意图是否对上，不需要读完整长文
 MAX_CONTENT_CHARS = 600
 MAX_TURNS = 60
 
+# v3 校准（公开轨 D1 作开发集，qwen3:8b）：D1 召回 20/20，干净样本误报 0/12。
+# 关键改动：按“用户诉求 -> 客服回复”成对渲染，并要求逐对输出 related 判定，
+# 避免小模型只回一个空对象、把漏判伪装成“无问题”。
 SYSTEM_PROMPT = (
-    "你是对话数据质检员，只判断客服回复是否跑题（答非所问）。只输出 json，不要输出任何解释性文字。\n"
-    "逐条 assistant 回复按以下步骤判断：\n"
-    "1. 看该回复之前最近一条 user 消息，确定用户这一轮在问什么。\n"
-    "2. 只要回复仍在这个话题上推进，就算回应：直接回答、承认并记录、承诺转交/升级，"
-    "或给出替代方案与下一步动作（如“稍后短信通知”“已帮您登记”“正在查询”）。\n"
-    "3. 只有回复明显在讲另一件事时才判 off_topic：答的是别的问题、模板串线，"
-    "或内容与用户诉求没有任何语义关联。\n"
-    "4. 不要因为回答不具体、不完整、没给出确切时间/型号/金额而判 off_topic。\n"
-    "5. 拿不准时不要报问题。\n"
-    "示例（均不应判 off_topic）：\n"
-    "user: 这个型号和页面写的不一样 -> assistant: 您反馈的问题我记录下来了，会转给对应同事。\n"
-    "user: 能不能给个大概时间 -> assistant: 稍后会有短信通知，请留意。\n"
-    "user: 帮我催一下 -> assistant: 我已为您催办，预计两个工作日内有进展。"
+    "你是对话数据质检员，只判断客服回复是否答非所问（off_topic）。只输出 json。\n"
+    "输入按“用户诉求 -> 客服回复”成对给出，每对带 assistant 消息下标。\n"
+    "对每一对都要给出 related 判断，不能遗漏：\n"
+    "- 客服直接回答该问题、承认并记录、承诺转交/升级、说明正在查询、"
+    "或给出与该问题相关的下一步 → related=true。\n"
+    "- 客服讲的是另一个业务事项，与用户这一轮的问题没有语义关联；"
+    "或只是与诉求无关的通用话术 → related=false。\n"
+    "- 回复不具体、不完整、没有确切时间/型号/金额 → 仍算 related=true。\n"
+    "- 语气不礼貌 → 仍算 related=true。\n"
+    "判断依据是主题是否相关，不是回答质量。"
 )
 
 USER_TEMPLATE = (
-    "对话如下（方括号内为消息下标 turn）：\n"
-    "{rendered}\n\n"
-    '请输出 json：{{"issues": [{{"turn": <assistant 消息下标>, '
-    '"type": "off_topic", "detail": "<一句话，不超过 20 字>"}}]}}\n'
-    '没有问题时输出 {{"issues": []}}，不要输出多余字段'
+    "成对数据如下：\n"
+    "{pairs}\n\n"
+    "必须为每一对输出一条判断，只输出 json："
+    '{{"verdicts": [{{"turn": <assistant 下标>, "related": true 或 false, '
+    '"detail": "<不超过 20 字>"}}]}}\n'
+    "related=false 表示该回复答非所问；不要遗漏任何一对，不要输出其他字段。"
 )
 
 
@@ -64,55 +66,127 @@ class ChatClient(Protocol):
         ...
 
 
+def _clip(content: Any) -> str:
+    text = str(content or "")
+    if len(text) > MAX_CONTENT_CHARS:
+        text = text[:MAX_CONTENT_CHARS] + "…"
+    return text
+
+
+def iter_pairs(dialogue: Dict[str, Any]) -> Iterator[Tuple[int, int, str, str]]:
+    """按“user 诉求 -> 紧随其后的 assistant 回复”成对遍历。
+
+    yields: (user_turn, assistant_turn, user_content, assistant_content)
+    """
+    pending: Any = None
+    messages = list((dialogue or {}).get("messages") or [])[:MAX_TURNS]
+    for i, msg in enumerate(messages):
+        role = msg.get("role")
+        if role == "user":
+            pending = (i, _clip(msg.get("content")))
+        elif role == "assistant" and pending is not None:
+            yield pending[0], i, pending[1], _clip(msg.get("content"))
+            pending = None
+
+
+def render_pairs(dialogue: Dict[str, Any]) -> str:
+    """成对渲染：降低小模型对齐“哪条回复对应哪条诉求”的难度。"""
+    return "\n\n".join(
+        f"user[{u}] 诉求：{uc}\nassistant[{a}] 回复：{ac}"
+        for u, a, uc, ac in iter_pairs(dialogue)
+    )
+
+
 def render_dialogue(dialogue: Dict[str, Any]) -> str:
     """把对话渲染成带下标的纯文本，控制单条长度以约束 token。"""
     lines = []
     for i, msg in enumerate(list((dialogue or {}).get("messages") or [])[:MAX_TURNS]):
-        content = str(msg.get("content", ""))
-        if len(content) > MAX_CONTENT_CHARS:
-            content = content[:MAX_CONTENT_CHARS] + "…"
-        lines.append(f"[{i}] {msg.get('role')}: {content}")
+        lines.append(f"[{i}] {msg.get('role')}: {_clip(msg.get('content'))}")
     return "\n".join(lines)
 
 
+# 小模型可能重复顶层键（{"verdicts": [...], "verdicts": [...]}），
+# 因此不依赖整体 json 合法，而是逐对象提取 turn/related 判定。
+_PAIR_TURN_FIRST = re.compile(
+    r'"turn"\s*:\s*(\d+)[^{}]*?"related"\s*:\s*"?(true|false)"?'
+    r'(?:[^{}]*?"detail"\s*:\s*"((?:\\.|[^"\\])*)")?',
+    re.IGNORECASE,
+)
+_PAIR_RELATED_FIRST = re.compile(
+    r'"related"\s*:\s*"?(true|false)"?[^{}]*?"turn"\s*:\s*(\d+)'
+    r'(?:[^{}]*?"detail"\s*:\s*"((?:\\.|[^"\\])*)")?',
+    re.IGNORECASE,
+)
+
+
+def _unescape(raw: Any) -> str:
+    if not raw:
+        return ""
+    try:
+        return json.loads(f'"{raw}"')
+    except (TypeError, ValueError):
+        return str(raw)
+
+
+def _extract_verdicts(text: str) -> Dict[int, Tuple[bool, str]]:
+    found: Dict[int, Tuple[bool, str]] = {}
+    for m in _PAIR_TURN_FIRST.finditer(text):
+        turn = int(m.group(1))
+        related = m.group(2).lower() == "true"
+        detail = _unescape(m.group(3))
+        if turn in found and found[turn][0] != related:
+            raise JudgeError(f"判官对 turn {turn} 给出冲突判定")
+        found.setdefault(turn, (related, detail))
+    for m in _PAIR_RELATED_FIRST.finditer(text):
+        turn = int(m.group(2))
+        related = m.group(1).lower() == "true"
+        detail = _unescape(m.group(3))
+        # 同一 turn 出现两种判法时无法采信，交给上层按判官故障处理
+        if turn in found and found[turn][0] != related:
+            raise JudgeError(f"判官对 turn {turn} 给出冲突判定")
+        found.setdefault(turn, (related, detail))
+    return found
+
+
 def parse_verdict(text: str, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """解析判官输出；不合契约直接抛 JudgeError。"""
+    """解析判官输出；不合契约直接抛 JudgeError。
+
+    v3 契约：每条成对回复都必须有 related 判定。漏判不是“没问题”，
+    而是“没验成”，必须显式失败。
+    """
     if not str(text or "").strip():
         # 实测：推理型模型会把 max_tokens 全花在思考上，content 为空。
         # 这不是"没有违规"，必须显式失败。
         raise JudgeError("判官返回空内容（可能被 max_tokens 截断）")
 
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError) as e:
-        raise JudgeError(f"判官输出不是合法 json: {e}") from e
+    expected = {a for _, a, _, _ in iter_pairs(dialogue)}
+    if not expected:
+        return []
 
-    if not isinstance(data, dict):
-        raise JudgeError("判官输出必须是 json 对象")
+    found = _extract_verdicts(text)
+    if not found:
+        raise JudgeError("判官输出缺少逐对判定（verdicts）")
 
-    issues = data.get("issues", [])
-    if not isinstance(issues, list):
-        raise JudgeError("issues 必须是数组")
-
-    assistant_turns = {
-        i for i, m in enumerate((dialogue or {}).get("messages") or [])
-        if m.get("role") == "assistant"
-    }
-
-    out: List[Dict[str, Any]] = []
-    for item in issues:
-        if not isinstance(item, dict):
+    seen: Dict[int, Tuple[bool, str]] = {}
+    for turn, verdict in found.items():
+        # 只认成对的 assistant 轮：指向 user/system 或越界时丢弃，不做修正
+        if turn not in expected:
             continue
-        turn = item.get("turn")
-        # 只认 assistant 轮：判官指向 user/system 或越界时丢弃，不做修正
-        if not isinstance(turn, int) or turn not in assistant_turns:
-            continue
-        out.append({
+        seen[turn] = verdict
+
+    missing = expected - set(seen)
+    if missing:
+        raise JudgeError(f"判官漏判 assistant 轮: {sorted(missing)}")
+
+    return [
+        {
             "rule": C3_OFF_TOPIC,
             "turn": turn,
-            "detail": str(item.get("detail") or "回复与当轮诉求无关"),
-        })
-    return out
+            "detail": detail or "回复与当轮诉求无关",
+        }
+        for turn, (related, detail) in sorted(seen.items())
+        if not related
+    ]
 
 
 @dataclass
@@ -121,8 +195,8 @@ class LLMJudge:
 
     client: ChatClient
     version: str = JUDGE_VERSION
-    # 推理型模型（如 deepseek-flash）会先消耗思考 token；给小了会导致 content 为空
-    max_tokens: int = 1024
+    # 推理型模型（如 qwen3 / deepseek-flash）会先消耗思考 token；给小了会导致 content 为空
+    max_tokens: int = 2048
     stage: str = "judge"
     run_id: str = "adhoc"
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -132,7 +206,7 @@ class LLMJudge:
     def __call__(self, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
         payload = [{"role": "system", "content": SYSTEM_PROMPT},
                    {"role": "user", "content": USER_TEMPLATE.format(
-                       rendered=render_dialogue(dialogue))}]
+                       pairs=render_pairs(dialogue))}]
 
         resp = self.client.chat(
             payload,
@@ -152,5 +226,5 @@ class LLMJudge:
 
 __all__ = [
     "JUDGE_VERSION", "RUBRIC_VERSION", "JudgeError", "LLMJudge",
-    "parse_verdict", "render_dialogue",
+    "iter_pairs", "parse_verdict", "render_dialogue", "render_pairs",
 ]
