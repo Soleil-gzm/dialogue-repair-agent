@@ -15,7 +15,7 @@ Portfolio: https://soleil-gzm.github.io/portfolio/cases/agent/
 **可回退修复闭环**（`rewrite_segment` + A3R 多轮策略）、dev/test 分层切分、
 `generate` / `judge` 分侧路由，以及 DeepSeek 客户端（重试分类 + 版本化价格表 + token 账本 + 响应缓存）。
 
-Sprint 1b 已完成 A2 单次重写臂、L3 统计层（Wilson CI + 精确 McNemar）、replay cassette 与 checkpoint 批量续跑；剩余双盲判官与分布实验。
+Sprint 1b 已完成 A2 单次重写臂、L3 统计层（Wilson CI + 精确 McNemar + 退化指标：长度比 / distinct-2 / 跨样本 4-gram）、replay cassette 与 checkpoint 批量续跑；剩余双盲判官与分布实验。
 完整设计见 [Agent 文档中心](agent/docs/README.md)。
 
 > 本仓库由主工程的 `agent/` 目录按 `oss_manifest.txt` 导出，不含任何业务数据或内部文档。

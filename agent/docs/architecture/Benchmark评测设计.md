@@ -1,8 +1,8 @@
 # Agent 增强层 Benchmark 评测设计
 
-> 版本：v1.3  
+> 版本：v1.4  
 > 首次版本：v1.0（2026-11-12，原文见 [归档快照](../archive/v1.0-2026-11-12/Benchmark专项设计方案.md)）  
-> 最后修订：2026-11-23（新增 replay cassette 与 checkpoint 批量接入）  
+> 最后修订：2026-11-23（新增 L3 退化指标：长度比 / distinct-2 / 跨样本 4-gram）  
 > 归属：`agent/docs/architecture/`  
 > 定位：**独立可执行方案**。本文是 Benchmark 指标口径、统计规则与产物规格的唯一权威来源。  
 > 本期范围：不包含 RAG（已移出），对照臂命名预留 `A5-RAG`。
@@ -32,6 +32,7 @@
 | L1 规则、连贯性、语义判官 | 已实现 | `eval/rules.py`、`coherence.py`、`judge.py` |
 | L2 预算、Trace、死循环保护 | 已实现 | `runtime/budget.py`、`trace.py`、`loop.py` |
 | L3 胜率区间、McNemar | 已实现（Wilson CI + 精确二项） | 双盲、人工校准仍未实现 |
+| L3 退化指标（长度比 / distinct-2 / 跨样本 4-gram） | 已实现 | `benchmark/degradation.py`；随 `--arm` / `--compare` 结果输出，报告表格渲染 |
 | 指纹、不可变锁、运行清单、ledger | 已实现 | `benchmark/fingerprint.py`、`lock.py`、`manifest.py`、`runtime/ledger.py` |
 | replay / cassette / checkpoint 批量接入 | 已实现（S1b） | `runtime/cassette.py`、`checkpoint.py`；`agent_eval --profile replay / --cassette / --checkpoint` |
 | 报告三件套 + SVG | 已实现 | `benchmark/report.py` |
@@ -304,7 +305,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 
 四层，**每层都必须给出「数据来源」**，否则指标不可复算。
 
-> 实现口径（2026-11-20）：L1/L2 已有对应代码；L3 的 Wilson CI、精确 McNemar 与 `--compare` 已实现，双盲与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95 与缓存命中率尚未统计。
+> 实现口径（2026-11-23）：L1/L2 已有对应代码；L3 的 Wilson CI、精确 McNemar、`--compare` 与退化指标（长度比 / distinct-2 / 跨样本 4-gram）已实现，双向盲评与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95 与缓存命中率尚未统计。
 
 ### 4.1 L1 能力层 —— 工具是否准确
 
@@ -328,7 +329,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 | 决策可解释率 | 含 `reason` 字段的决策 / 总决策 | = 1.00 |
 | 回退率 | `fallback_keep` 数 / 总数 | ≤ 0.10 |
 
-### 4.3 L3 效果层 —— 数据是否真的变好（基础统计已实现；双盲/人工未实现）
+### 4.3 L3 效果层 —— 数据是否真的变好（胜率与退化指标已实现；双盲/人工未实现）
 
 | 指标 | 定义 | 门槛 | 备注 |
 |---|---|---|---|
@@ -338,9 +339,11 @@ python -m agent.benchmark.fixtures --profile realistic \
 | 结构不变率 | 同 L1 定义 | = 1.00 | **硬门禁** |
 | 长度比 | 重写后字符数 / 原字符数 | 0.8–1.3 | 防"注水变长" |
 | distinct-2 变化 | (后 − 前) / 前 | 降幅 ≤ 5% | 防同质化 |
-| 跨样本重复率 | 不同对话间 4-gram 重复比例 | 降幅 ≤ 5% | **防"洗成一个味"** |
+| 跨样本重复率 | 不同对话间 4-gram 重复比例 | 升幅 ≤ 5% | **防"洗成一个味"** |
 
 > `跨样本重复率` 是为本项目量身加的：原系统最大的病是"味道重复"，LLM 重写如果把它洗得更均匀，等于用更贵的方式犯了同一个错。
+
+> 实现口径（`benchmark/degradation.py`）：只取 assistant 文本、去掉空白后按字符切 n-gram；长度比与 distinct-2 为语料级汇总（不是逐样本平均）；跨样本重复率 = 被 ≥2 条样本共用的 4-gram 数 / 全部唯一 4-gram 数，样本内先去重。原样本重复率为 0、改写后出现跨样本撞词时比值无定义，但直接判 fail。断点续跑跳过的样本不计入，结果中的 `n_samples` 写明实际样本量。
 
 ### 4.4 L4 工程层 —— 是否可用、可信、可复现（部分实现）
 
@@ -640,7 +643,7 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | A0/A2/A3/A3L/A3R/A4/A4R | 已实现（A1 已于 2026-11-19 移出主链） | — |
 | L1 指标 | 规则、连贯性、D1 判官已实现 | 定位 P/R/F1 的完整统计未汇总 |
 | L2 指标 | 预算、死循环、Trace、回退已实现 | 无效调用率、可解释率未在报告汇总 |
-| L3 指标 | 基础统计已实现 | 胜率、Wilson CI、精确 McNemar 已实现；双盲、人工标注未实现 |
+| L3 指标 | 胜率与退化指标已实现 | 胜率、Wilson CI、精确 McNemar、长度比 / distinct-2 / 跨样本 4-gram 已实现；双盲、人工标注未实现 |
 | L4 指标 | token、成本、指纹复现已实现；checkpoint 续跑与重复计费断言已接入 | P95、缓存命中率未统计 |
 | 报告产物 | 三件套 + 四张 SVG | 长表、显著性、账本汇总、trace 样例未生成 |
 | replay 档 | 已实现 | `--profile replay --cassette`；请求指纹匹配，缺失即报错 |
