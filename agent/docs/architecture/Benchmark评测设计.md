@@ -1,8 +1,8 @@
 # Agent 增强层 Benchmark 评测设计
 
-> 版本：v1.1  
+> 版本：v1.2  
 > 首次版本：v1.0（2026-11-12，原文见 [归档快照](../archive/v1.0-2026-11-12/Benchmark专项设计方案.md)）  
-> 最后修订：2026-11-18  
+> 最后修订：2026-11-23（新增公开轨 `realistic` 分布校准档）  
 > 归属：`agent/docs/architecture/`  
 > 定位：**独立可执行方案**。本文是 Benchmark 指标口径、统计规则与产物规格的唯一权威来源。  
 > 本期范围：不包含 RAG（已移出），对照臂命名预留 `A5-RAG`。
@@ -19,11 +19,12 @@
 
 > 反例（绝大多数作品集的做法）：跑 20 条，觉得"改完更顺了"，写"连贯性提升 30%"。这条路一站不住脚，因为**没有基线、没有分母、没有区间**。
 
-### 0.1 实现状态（截至 Sprint 1a）
+### 0.1 实现状态（截至 Sprint 1b，2026-11-23）
 
 | 能力 | 状态 | 落地位置 |
 |---|---|---|
 | 公开轨 `base/dev/test`、`defects` 生成 | 已实现 | `benchmark/fixtures.py`、`defects.py` |
+| 公开轨 `realistic` 分布校准档 | 已实现 | `benchmark/profiles.py`、`realistic.py`；`fixtures --profile realistic` |
 | A0 恒等臂 | 已实现 | `benchmark/arms.py`、`run.py` |
 | A1 规则增强臂 | 已移出主链（2026-11-19） | 归档 `benchmark/baseline/deprecated/a1_2026-11-19.json` |
 | A2 单次重写臂 | 已实现（`run_a2_dialogue`） | 全量结果见 `logs/agent/2026-11-20-full/` |
@@ -173,6 +174,17 @@
 
 两轨使用**完全相同的字段契约**，因此同一份 harness 代码可跑两轨。本仓库只分发公开轨。
 
+公开轨内部再分两个生成档位：
+
+| 档位 | 产物 | 定位 |
+|---|---|---|
+| `v1`（默认） | `base_v1` / `dev_v1` / `test_v1` | 冻结基线，与 `baseline_lock.json` 绑定，不能静默改变 |
+| `realistic` | `realistic_v1` / `realistic_dev_v1` / `realistic_test_v1` | 用私有轨聚合分布校准的公开档，用于分布对照与鲁棒性实验 |
+
+`realistic` 只使用私有轨 1000 条对话的聚合参数：轮次直方图、去数字后的角色唯一率、
+对话内重复率、消息长度分位与实体密度；不复制原文、业务标签或客户信息。
+切换命令为 `--profile realistic`，产物与 `v1` 分开，不得覆盖冻结基线。
+
 ### 3.2 三个数据集
 
 | 数据集 | 规模 | 构造方式 | 提供的标签 | 服务的指标层 |
@@ -190,9 +202,40 @@ python -m agent.benchmark.fixtures \
   --test-out agent/fixtures/public/test_v1.json
 python -m agent.benchmark.defects --per-type 20 --seed 20261113 \
   --out agent/fixtures/public/defects_v1.jsonl
+
+# 4) 分布校准档：默认 120 条，不覆盖 v1
+python -m agent.benchmark.fixtures --profile realistic
+
+# 5) 分布校准档 dev / test 分层切分：40 + 80
+python -m agent.benchmark.fixtures --profile realistic \
+  --dev-out agent/fixtures/public/realistic_dev_v1.json \
+  --test-out agent/fixtures/public/realistic_test_v1.json
 ```
 
 **dev / test 必须分离**，且 test 只在最终结论时用一次。当前切分在生成阶段一次性完成（默认 `split-seed 20261118`），CLI **没有** `--split test` 开关。
+
+#### 3.2.1 分布校准档（realistic）
+
+| 数据集 | 规模 | 构造方式 | 用途 |
+|---|---|---|---|
+| `realistic_v1.json` | 120 | 按私有轨聚合分布生成 | 分布对照、鲁棒性实验 |
+| `realistic_dev_v1.json` | 40 | 与 test 一起分层切分 | 调参 |
+| `realistic_test_v1.json` | 80 | 分层切分，与 dev 不重叠 | 最终结论 |
+
+校准目标与 1000 条校准跑的结果：
+
+| 参数 | 私有轨聚合 | realistic 1000 条 |
+|---|---:|---:|
+| 轮次中位 / 均值 | 11 / 10.85 | 11 / 10.85 |
+| assistant / user 唯一率 | 49.53% / 28.51% | 49.3% / 28.3% |
+| 对话内 assistant 重复 | 3.3% | 2.9% |
+| system 长度 | 348–375 | 363–365 |
+| 消息数范围 | 3–53 | 3–53 |
+
+唯一率口径为“去数字后的全局唯一文本数 / 总消息数”。门禁由
+`agent/tests/test_fixture_profile.py` 固化，方法复盘见
+[公开轨分布校准](../notes/2026-11-23-公开轨分布校准.md)；笔记只作过程记录，
+参数与口径以本节为准。
 
 ### 3.3 六类缺陷注入（L1 的 ground truth 来源）
 
