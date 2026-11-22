@@ -29,7 +29,12 @@ class LockViolation(RuntimeError):
 
 def read_lock(path) -> Dict[str, Any]:
     p = Path(path)
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError as e:
+        raise LockViolation(
+            f"baseline_lock 不存在: {p}；请先用 run --write-lock 生成，而不是直接校验。"
+        ) from e
 
 
 def _comparable(lock: Dict[str, Any]) -> Dict[str, Any]:
@@ -65,6 +70,7 @@ def write_lock(
             "git_commit 无法完整描述产生指纹的代码。请先提交，或显式 --allow-dirty 仅作临时调试。"
         )
 
+    changelog_reason = ""
     if p.exists():
         existing = read_lock(p)
         if _comparable(existing) == _comparable(lock):
@@ -76,9 +82,12 @@ def write_lock(
             )
         if not reason.strip():
             raise ValueError("force 覆盖 baseline_lock 必须提供 reason（将写入 lock_changelog）")
-        _append_changelog(p, reason)
+        changelog_reason = reason
 
+    # 先落 lock，再记 changelog：写 lock 失败时不能留下"已覆盖"的假记录
     p.write_bytes(stable_dump(lock))
+    if changelog_reason:
+        _append_changelog(p, changelog_reason)
     return p
 
 

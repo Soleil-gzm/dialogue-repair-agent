@@ -50,6 +50,11 @@ class TestWriteLock:
         log = tmp_path / "lock_changelog.md"
         assert log.exists() and "更换评估器版本" in log.read_text(encoding="utf-8")
 
+    def test_missing_lock_raises_actionable_error(self, tmp_path):
+        """lock 缺失时不能抛裸 FileNotFoundError，要给出下一步操作提示。"""
+        with pytest.raises(LockViolation, match="--write-lock"):
+            read_lock(tmp_path / "nope.json")
+
     def test_generated_at_change_is_not_a_violation(self, tmp_path):
         """generated_at 是唯一允许变动的字段；仅它变化时视为无操作，不改写文件。"""
         p = tmp_path / "baseline_lock.json"
