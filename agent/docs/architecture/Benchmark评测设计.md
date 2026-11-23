@@ -31,7 +31,7 @@
 | A3 / A3L / A3R / A4 | 已实现 | `benchmark/agent_eval.py` |
 | L1 规则、连贯性、语义判官 | 已实现 | `eval/rules.py`、`coherence.py`、`judge.py` |
 | L2 预算、Trace、死循环保护 | 已实现 | `runtime/budget.py`、`trace.py`、`loop.py` |
-| L3 胜率区间、McNemar | 已实现（Wilson CI + 精确二项） | 双盲、人工校准仍未实现 |
+| L3 胜率区间、McNemar | 已实现（Wilson CI + 精确二项） | 人工校准仍未实现 |
 | L3 退化指标（长度比 / distinct-2 / 跨样本 4-gram） | 已实现 | `benchmark/degradation.py`；随 `--arm` / `--compare` 结果输出，报告表格渲染 |
 | 指纹、不可变锁、运行清单、ledger | 已实现 | `benchmark/fingerprint.py`、`lock.py`、`manifest.py`、`runtime/ledger.py` |
 | replay / cassette / checkpoint 批量接入 | 已实现（S1b） | `runtime/cassette.py`、`checkpoint.py`；`agent_eval --profile replay / --cassette / --checkpoint` |
@@ -155,7 +155,7 @@
 | R2 | 所有臂使用**同一抽样键集合**与同一 seed | 抽样偏差被误读为方法差异 | 只抽一次键，所有臂共用 |
 | R3 | 分层抽样：按 `scenario` × `turn_bucket` × `has_loss_flag` 分层 | 场景分布不一致 | 分层后按比例分配 |
 | R4 | **同一评估器版本**评所有臂 | 标准漂移 | evaluator 指纹入 lock |
-| R5 | 成对盲评：judge 不知道哪份是实验臂，**A/B 与 B/A 各评一次** | 位置偏差 | **设计目标，未实现（S1b）** |
+| R5 | 成对盲评：judge 不知道哪份是实验臂，**A/B 与 B/A 各评一次** | 位置偏差 | 已实现：`eval/pairwise.py`；`--compare ... --double-blind` |
 | R6 | 每条样本在每个臂只出现一次 | judge 记忆污染 | 输入去重 + key 唯一性断言 |
 | R7 | 失败样本**不回填、不丢弃**，计入分母 | 虚高 | 结果 JSON 单列 `failed` / `stopped`；L3 分母统一处理属 S1b |
 | R8 | 所有臂用**同一价格表版本**折算成本 | 成本曲线被污染 | 价格表版本入 lock |
@@ -305,7 +305,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 
 四层，**每层都必须给出「数据来源」**，否则指标不可复算。
 
-> 实现口径（2026-11-23）：L1/L2 已有对应代码；L3 的 Wilson CI、精确 McNemar、`--compare` 与退化指标（长度比 / distinct-2 / 跨样本 4-gram）已实现，双向盲评与人工标注未实现；L4 的 token、成本、指纹复现已实现，P95 与缓存命中率尚未统计。
+> 实现口径（2026-11-23）：L1/L2 已有对应代码；L3 的 Wilson CI、精确 McNemar、`--compare`、退化指标（长度比 / distinct-2 / 跨样本 4-gram）与 E2 双向盲评均已实现，人工标注未实现；L4 的 token、成本、指纹复现已实现，P95 与缓存命中率尚未统计。
 
 ### 4.1 L1 能力层 —— 工具是否准确
 
@@ -329,7 +329,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 | 决策可解释率 | 含 `reason` 字段的决策 / 总决策 | = 1.00 |
 | 回退率 | `fallback_keep` 数 / 总数 | ≤ 0.10 |
 
-### 4.3 L3 效果层 —— 数据是否真的变好（胜率与退化指标已实现；双盲/人工未实现）
+### 4.3 L3 效果层 —— 数据是否真的变好（胜率、双向盲评与退化指标已实现；人工未实现）
 
 | 指标 | 定义 | 门槛 | 备注 |
 |---|---|---|---|
@@ -379,7 +379,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 
 ### 5.1 三档评估器（成本递增，可信度递增）
 
-> 当前实现：E1 规则已实现；E2 只有 D1 单视角语义判官（`eval/judge.py`），成对双向盲评未实现；E3 人工标注未开展。
+> 当前实现：E1 规则已实现；E2 有 D1 单视角判官（`eval/judge.py`）与成对双向盲评（`eval/pairwise.py`，`--double-blind`）；E3 人工标注未开展。
 
 | 档 | 方法 | 成本 | 用途 | 可信度 |
 |---|---|---|---|---|
@@ -392,10 +392,12 @@ python -m agent.benchmark.fixtures --profile realistic \
 | 偏差 | 控制手段 |
 |---|---|
 | 位置偏差 | A/B 与 B/A 各评一次，矛盾记 tie |
-| 长度偏好 | rubric 明写"不因更长而加分"；报告附 `winner 长度均值差` |
+| 长度偏好 | rubric 明写"不因更长而加分"；报告附 `winner 长度均值差`（成对盲评的长度差统计属待补） |
 | 自我偏好 | judge 与生成用不同模型（若只能用同款，必须在局限中声明） |
 | 提示泄漏 | judge prompt 不含臂标签、不含"这是重写版"字样 |
 | 温度 | 0.0，并记录 |
+
+> 实现口径（`eval/pairwise.py`）：同一对输出按 left/right 各评一次，prompt 不含臂名；两次映射回臂身份后一致才计胜负，矛盾按 tie 计并计入 `contradictions`；输出不合契约单独计 `errors`，不混入平局。`--compare --double-blind` 的结果写在 `double_blind`：`wins_a` / `wins_b` / `ties` / `contradictions` / `errors` / `consistency_rate` / `tie_rate` / `win_rate_a`，并附 `missing_pairs`（只有一边跑完的样本数）。
 
 ### 5.3 E2 与 E3 的一致性校准
 
@@ -631,7 +633,7 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | B2 | E1 规则评估器 + 硬门禁 | 结构/实体/长度全部可判定 | ✅ 完成 |
 | B3 | run harness + `baseline_lock.json` | 离线 A0 可跑通 | ✅ 完成（A1 已于 2026-11-19 移出） |
 | B4 | A2/A3 接入 + ledger 汇总 | standard 档产出全指标 | ✅ A2/A3/A3L/A3R/A4/A4R 均已接入 |
-| B5 | E2 judge + 双向盲评 + 一致性校准 | κ ≥ 0.6，一致率 ≥ 75% | ⬜ 部分：单视角 D1 判官已实现；盲评与校准未做 |
+| B5 | E2 judge + 双向盲评 + 一致性校准 | κ ≥ 0.6，一致率 ≥ 75% | 🟡 双向盲评已实现（`--double-blind`）；人工一致性校准未做 |
 | B6 | 三件套报告 + 四张图 | 评审可离线一键复现 | ✅ 完成（SVG 四图） |
 | B7 | （可选）A4 Agent-llm | function calling 稳定后 | ✅ 完成 |
 
@@ -643,7 +645,7 @@ CI 额外断言 `baseline_lock.json` 的 `code.dirty == false`。A0 复现失败
 | A0/A2/A3/A3L/A3R/A4/A4R | 已实现（A1 已于 2026-11-19 移出主链） | — |
 | L1 指标 | 规则、连贯性、D1 判官已实现 | 定位 P/R/F1 的完整统计未汇总 |
 | L2 指标 | 预算、死循环、Trace、回退已实现 | 无效调用率、可解释率未在报告汇总 |
-| L3 指标 | 胜率与退化指标已实现 | 胜率、Wilson CI、精确 McNemar、长度比 / distinct-2 / 跨样本 4-gram 已实现；双盲、人工标注未实现 |
+| L3 指标 | 胜率、双向盲评与退化指标已实现 | 胜率、Wilson CI、精确 McNemar、E2 双向盲评、长度比 / distinct-2 / 跨样本 4-gram 已实现；人工标注未实现 |
 | L4 指标 | token、成本、指纹复现已实现；checkpoint 续跑与重复计费断言已接入 | P95、缓存命中率未统计 |
 | 报告产物 | 三件套 + 四张 SVG | 长表、显著性、账本汇总、trace 样例未生成 |
 | replay 档 | 已实现 | `--profile replay --cassette`；请求指纹匹配，缺失即报错 |

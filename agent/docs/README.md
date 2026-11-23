@@ -48,11 +48,11 @@
 | 文档 | 版本 | 状态 | 范围 |
 |---|---|---|---|
 | [架构设计](architecture/架构设计.md) | v1.1 | 现行 | 整体架构图、模块划分、核心流程、技术选型、非功能性设计、实现边界 |
-| [模块与接口说明](architecture/模块与接口说明.md) | v1.2 | 现行 | 数据契约、4 个工具契约、运行时契约、5 个 CLI、cassette / checkpoint / 退化指标契约、配置与产物契约 |
-| [Benchmark评测设计](architecture/Benchmark评测设计.md) | v1.4 | 现行 | 基线指纹、可比性规则、数据集（含 `realistic` 校准档）、replay / checkpoint、退化指标、L1–L4 指标、统计与报告规格 |
+| [模块与接口说明](architecture/模块与接口说明.md) | v1.3 | 现行 | 数据契约、4 个工具契约、运行时契约、5 个 CLI、cassette / checkpoint / 退化指标 / 双向盲评契约、配置与产物契约 |
+| [Benchmark评测设计](architecture/Benchmark评测设计.md) | v1.5 | 现行 | 基线指纹、可比性规则、数据集（含 `realistic` 校准档）、replay / checkpoint、退化指标、E2 双向盲评、L1–L4 指标、统计与报告规格 |
 | [决策记录ADR](decisions/决策记录ADR.md) | v1.3 | 现行 | D1–D10 决策、待定池、面试问答映射 |
-| [改造路线图](decisions/改造路线图.md) | v2.2 | 现行 | 关键词矩阵、S0–S3 Sprint 排序与状态 |
-| [部署与运行指南](guides/部署与运行指南.md) | v1.3 | 现行 | 安装、数据生成（含 `--profile realistic`）、离线复现、在线评测、cassette 回放与断点续跑、报告、排障、部署边界 |
+| [改造路线图](decisions/改造路线图.md) | v2.3 | 现行 | 关键词矩阵、S0–S3 Sprint 排序与状态 |
+| [部署与运行指南](guides/部署与运行指南.md) | v1.4 | 现行 | 安装、数据生成（含 `--profile realistic`）、离线复现、在线评测、cassette 回放与断点续跑、双向盲评、报告、排障、部署边界 |
 | [归档说明](archive/README.md) | — | 归档索引 | 版本追溯表与历史文档处置结论 |
 | [笔记索引](notes/README.md) | — | 过程记录 | 术语卡片、A1 移除、效果验证与鲁棒性实验 |
 | [代码审查报告](reviews/2026-11-20-项目状态评估与代码审查.md) | — | 审查记录 | 项目阶段、代码审查、代码漂移与整改建议 |
@@ -66,7 +66,7 @@
 ## 6. 历史文档
 
 - 旧版《对话数据Agent化改进计划书》v0.1 已归档，仅保留思路追溯。
-- 旧版《Benchmark专项设计方案》v1.0 已归档；现行版本为 [Benchmark评测设计](architecture/Benchmark评测设计.md) v1.4。
+- 旧版《Benchmark专项设计方案》v1.0 已归档；现行版本为 [Benchmark评测设计](architecture/Benchmark评测设计.md) v1.5。
 - 旧索引中的《Agent化改造总纲与Benchmark方案》《Agent化技术评估与落地方案》《数据策略评估与决策》《数据格式适配与兼容规范》已找回，归入 `archive/private/` 本地留存（不随开源切片发布）；有效内容已按主题并入现行文档，处置结论见 [归档说明](archive/README.md#3-找回副本的处置)。
 
 ## 7. 一致性校验
@@ -102,3 +102,4 @@ python -m agent.benchmark.run \
 | 2026-11-23 | Benchmark 评测设计升至 v1.2（新增公开轨 `realistic` 分布校准档）、改造路线图升至 v2.2（同步 S1b 进度）、部署指南升至 v1.1（补 `--profile realistic` 命令）；本索引同步版本号与 fixture 规模 |
 | 2026-11-23 | 落地 replay cassette 与 checkpoint 批量续跑：Benchmark v1.3、模块与接口说明 v1.1、架构设计 v1.1、部署指南 v1.2、路线图 §3.3 标记完成 |
 | 2026-11-23 | 落地 L3 退化指标（长度比 / distinct-2 / 跨样本 4-gram）：Benchmark v1.4、模块与接口说明 v1.2；结果 JSON 与报告新增退化表 |
+| 2026-11-23 | 落地 E2 双向盲评（A/B、B/A 各一次，矛盾记 tie）：Benchmark v1.5、模块与接口说明 v1.3、部署指南 v1.4、路线图 v2.3；新增 `--double-blind` |
