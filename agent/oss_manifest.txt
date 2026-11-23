@@ -132,6 +132,8 @@ api/server.py
 rag/__init__.py
 rag/embed.py
 rag/store.py
+agent/__init__.py
+agent/react.py
 
 # ---------- BUILD ----------
 # 内部发布工具与主工程胶水层：只在主工程环境使用，不随开源仓库分发
