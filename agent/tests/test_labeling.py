@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 
-from agent.eval.labeling import load_judge_off_turns
+from agent.eval.labeling import (aggregate, build_sheet, load_judge_off_turns)
 
 
 def _write_jsonl(records):
@@ -46,3 +46,70 @@ def test_load_judge_off_turns_skips_invalid_json():
         assert load_judge_off_turns(path) == {}
     finally:
         os.unlink(path)
+
+
+def _write_tsv(text):
+    f = tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False, encoding="utf-8")
+    f.write(text)
+    f.close()
+    return f.name
+
+
+def test_build_sheet_shape():
+    items = [{"key": "aaa", "n_off": 0}, {"key": "bbb", "n_off": 2}]
+    off = {"bbb": {2: "x", 4: "y"}}
+    lines = build_sheet(items, off).strip().split("\n")
+    assert lines[0].split("\t") == [
+        "sample_no", "key", "n_off", "off_turns", "overall", "per_turn", "notes"]
+    assert lines[1].split("\t")[:4] == ["1", "aaa", "0", ""]
+    assert lines[2].split("\t")[:4] == ["2", "bbb", "2", "2;4"]
+
+
+def test_aggregate_precision_and_negative_control():
+    tsv = _write_tsv(
+        "sample_no\tkey\tn_off\toff_turns\toverall\tper_turn\tnotes\n"
+        "1\taaa\t0\t\t否\t\t\n"          # 阴性对照，确认无问题
+        "2\tbbb\t2\t2;4\t是\t是;否\t\n"  # 两轮：一真一误报
+        "3\tccc\t1\t2\t\t\t\n"          # 未填
+    )
+    try:
+        s = aggregate(tsv)
+        assert s["labeled"] == 2 and s["pending"] == 1
+        assert s["overall"] == {"yes": 1, "no": 1, "unsure": 0}
+        assert s["turn"]["yes"] == 1 and s["turn"]["no"] == 1
+        assert s["turn"]["precision"] == 0.5
+        assert s["negative_controls"] == {
+            "n": 1, "labeled": 1, "confirmed_no_issue": 1, "false_positive_rate": 0.0}
+    finally:
+        os.unlink(tsv)
+
+
+def test_aggregate_per_turn_length_mismatch_raises():
+    tsv = _write_tsv(
+        "sample_no\tkey\tn_off\toff_turns\toverall\tper_turn\tnotes\n"
+        "1\tbbb\t2\t2;4\t是\t是\t\n"
+    )
+    try:
+        try:
+            aggregate(tsv)
+        except ValueError as e:
+            assert "per_turn" in str(e)
+        else:
+            raise AssertionError("应因 per_turn 数量不一致报错")
+    finally:
+        os.unlink(tsv)
+
+
+def test_aggregate_recheck_kappa_identical():
+    header = ("sample_no\tkey\tn_off\toff_turns\toverall\tper_turn\tnotes\n")
+    body = "1\ta\t1\t2\t是\t是\t\n2\tb\t1\t2\t否\t否\t\n3\tc\t0\t\t不确定\t\t\n"
+    p1 = _write_tsv(header + body)
+    p2 = _write_tsv(header + body)
+    try:
+        s = aggregate(p1, p2)
+        assert s["recheck"]["n"] == 3
+        assert s["recheck"]["raw_agreement"] == 1.0
+        assert s["recheck"]["cohen_kappa"] == 1.0
+    finally:
+        os.unlink(p1)
+        os.unlink(p2)

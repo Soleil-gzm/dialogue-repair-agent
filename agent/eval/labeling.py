@@ -152,17 +152,176 @@ def build_template(items: List[dict], off: Dict[str, Dict[int, str]],
     return "\n".join(lines) + "\n"
 
 
+SHEET_HEADER = ["sample_no", "key", "n_off", "off_turns",
+                "overall", "per_turn", "notes"]
+
+
+def build_sheet(items: List[dict], off: Dict[str, Dict[int, str]]) -> str:
+    """生成 TSV 标注表：一行一样本，便于编辑器或表格里快速填写。
+
+    per_turn 与 off_turns 顺序对齐，用分号分隔：off_turns="2;4" 对应
+    per_turn="是;否"。
+    """
+    rows = ["\t".join(SHEET_HEADER)]
+    for s_i, it in enumerate(items, 1):
+        turns = sorted(off.get(it["key"], {}))
+        rows.append("\t".join([
+            str(s_i), it["key"], str(len(turns)),
+            ";".join(str(t) for t in turns), "", "", "",
+        ]))
+    return "\n".join(rows) + "\n"
+
+
+_POS = {"是", "y", "yes", "true", "1", "对", "有问题"}
+_NEG = {"否", "n", "no", "false", "0", "没问题"}
+_UNSURE = {"不确定", "?", "unsure", "拿不准", "unk"}
+
+
+def _norm_label(raw: str) -> str:
+    """归一化人工标签 → yes / no / unsure / ''（未填）。"""
+    s = (raw or "").strip().lower()
+    if not s:
+        return ""
+    if s in _POS:
+        return "yes"
+    if s in _NEG:
+        return "no"
+    if s in _UNSURE:
+        return "unsure"
+    raise ValueError(f"无法识别的标签：{raw!r}（应为 是/否/不确定）")
+
+
+def _read_sheet(path: str) -> List[dict]:
+    """读取填写后的 TSV（或两列兼容格式），返回逐行记录。"""
+    rows: List[dict] = []
+    with open(path, encoding="utf-8") as f:
+        header = f.readline().rstrip("\n").split("\t")
+        need = {"sample_no", "overall", "off_turns", "per_turn"}
+        if not need.issubset(set(header)):
+            raise ValueError(f"{path} 表头缺少必需列 {need - set(header)}")
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            cells = line.split("\t")
+            cells += [""] * (len(header) - len(cells))
+            rows.append(dict(zip(header, cells)))
+    return rows
+
+
+def _cohen_kappa(a: List[str], b: List[str]) -> float:
+    """多类别 Cohen's κ（单标注者两个时间点的 test-retest 信度）。"""
+    n = len(a)
+    if n == 0:
+        return float("nan")
+    po = sum(1 for x, y in zip(a, b) if x == y) / n
+    labels = set(a) | set(b)
+    pe = sum((a.count(c) / n) * (b.count(c) / n) for c in labels)
+    return 1.0 if pe == 1 else (po - pe) / (1 - pe)
+
+
+def aggregate(sheet_path: str, recheck_path: str = "") -> dict:
+    """汇总人工标注：整体分布、judge 轮级精确率、阴性对照、test-retest 一致性。"""
+    rows = _read_sheet(sheet_path)
+    overall = {"yes": 0, "no": 0, "unsure": 0}
+    labeled = pending = 0
+    turn = {"yes": 0, "no": 0, "unsure": 0}
+    neg_total = neg_labeled = neg_no = 0
+
+    for r in rows:
+        lab = _norm_label(r.get("overall", ""))
+        n_off = int(r.get("n_off") or 0)
+        if lab:
+            labeled += 1
+            overall[lab] += 1
+        else:
+            pending += 1
+        if n_off == 0:
+            neg_total += 1
+            if lab:
+                neg_labeled += 1
+                neg_no += int(lab == "no")
+        turns = [t for t in (r.get("off_turns") or "").split(";") if t.strip()]
+        raw_per = (r.get("per_turn") or "").strip()
+        if turns and raw_per:
+            per = raw_per.split(";")
+            if len(per) != len(turns):
+                raise ValueError(
+                    f"样本 {r.get('sample_no')} 的 per_turn 数量({len(per)})"
+                    f" 与 off_turns({len(turns)}) 不一致")
+            for p in per:
+                v = _norm_label(p)
+                if v in ("yes", "no", "unsure"):
+                    turn[v] += 1
+
+    checked = turn["yes"] + turn["no"]
+    summary = {
+        "n_samples": len(rows),
+        "labeled": labeled,
+        "pending": pending,
+        "overall": overall,
+        "turn": {
+            **turn,
+            "checked": checked,
+            # judge 轮级精确率：判为答非所问的轮里，人工确认为真的比例
+            "precision": round(turn["yes"] / checked, 4) if checked else None,
+        },
+        "negative_controls": {
+            "n": neg_total,
+            "labeled": neg_labeled,
+            "confirmed_no_issue": neg_no,
+            "false_positive_rate": round(1 - neg_no / neg_labeled, 4) if neg_labeled else None,
+        },
+    }
+
+    if recheck_path:
+        old = {r["sample_no"]: r for r in _read_sheet(sheet_path)}
+        new = {r["sample_no"]: r for r in _read_sheet(recheck_path)}
+        common = sorted(set(old) & set(new),
+                        key=lambda k: int(k) if str(k).isdigit() else 0)
+        a, b = [], []
+        for k in common:
+            va, vb = _norm_label(old[k].get("overall", "")), _norm_label(new[k].get("overall", ""))
+            if va and vb:
+                a.append(va)
+                b.append(vb)
+        summary["recheck"] = {
+            "n": len(a),
+            "agree": sum(1 for x, y in zip(a, b) if x == y),
+            "raw_agreement": round(sum(1 for x, y in zip(a, b) if x == y) / len(a), 4)
+            if a else None,
+            "cohen_kappa": round(_cohen_kappa(a, b), 4) if a else None,
+        }
+    return summary
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--base", required=True, help="base 真实对话 JSON")
-    ap.add_argument("--ckpt", required=True, help="A4 checkpoint jsonl")
-    ap.add_argument("--cassette", required=True, help="A4 cassette jsonl")
-    ap.add_argument("--out", required=True, help="标注模板 Markdown 输出路径")
-    ap.add_argument("--index-out", required=True,
-                    help="抽样索引 JSON（供标注完成后汇总，不入库）")
+    ap.add_argument("--base", help="base 真实对话 JSON（生成模板时必需）")
+    ap.add_argument("--ckpt", help="A4 checkpoint jsonl（生成模板时必需）")
+    ap.add_argument("--cassette", help="A4 cassette jsonl（生成模板时必需）")
+    ap.add_argument("--out", help="标注模板 Markdown 输出路径（生成模板时必需）")
+    ap.add_argument("--index-out", help="抽样索引 JSON（生成模板时必需）")
+    ap.add_argument("--sheet-out", help="TSV 标注表输出路径（可选，便于快速填写）")
     ap.add_argument("--n", type=int, default=50, help="抽样总数（默认 50）")
     ap.add_argument("--seed", type=int, default=20261123)
+    ap.add_argument("--aggregate", help="填写完成的 TSV 路径；给出即进入汇总模式")
+    ap.add_argument("--recheck", help="复标 TSV 路径（test-retest 一致性，可选）")
+    ap.add_argument("--summary-out", help="汇总 JSON 输出路径（可选）")
     args = ap.parse_args()
+
+    if args.aggregate:
+        summary = aggregate(args.aggregate, args.recheck or "")
+        text = json.dumps(summary, ensure_ascii=False, indent=2)
+        if args.summary_out:
+            Path(args.summary_out).write_text(text + "\n", encoding="utf-8")
+        print(text)
+        return
+
+    missing = [f for f in ("base", "ckpt", "cassette", "out", "index_out")
+               if not getattr(args, f)]
+    if missing:
+        ap.error(f"生成模板缺少参数：{', '.join('--' + m.replace('_', '-') for m in missing)}")
 
     base = json.load(open(args.base, encoding="utf-8"))
     status: Dict[str, str] = {}
@@ -215,6 +374,9 @@ def main() -> None:
     md = build_template(sampled, off, org_terms)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(md, encoding="utf-8")
+    if args.sheet_out:
+        Path(args.sheet_out).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.sheet_out).write_text(build_sheet(sampled, off), encoding="utf-8")
 
     # 索引：供标注完成后回填汇总（存 key / idx / off 轮，不存原文）
     index = [{
