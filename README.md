@@ -273,6 +273,15 @@ python -m agent.benchmark.report --results $dir --out "$dir/report"
    A4R 检出 100%，修复率却只有 13.3%，D4 仍全部回退。
    因此评价修复臂必须同时看 `repaired` 与人工抽检，不能只看 `blocked`。
 
+### 外部效度：私有轨真实数据验证（进行中）
+
+公开轨是合成 / 校准分布，私有轨用 200 条真实业务对话（脱敏后不入库）验证同一套 Agent 在真实分布上是否仍有效：
+
+- **A3 规则层零误报保持**：200 条真实对话上 `clean_flagged=0/200`，规则硬门没有用误伤换召回。
+- **A4 召回跨域有效**：macro blocked 召回 **96%**（公开轨 100%），D1 由语义判官补到 **20/20**——「判官是唯一覆盖 D1 的层」这一结论在真实数据上成立。
+- **待人工校准**：A4 在 200 条真实对话上检出 197 条（judge 判 14.9% 的客服轮答非所问），既可能反映真实数据质量，也可能是判官对长对话过度敏感；已生成二分类标注模板（`agent/eval/labeling.py`，脱敏后导出）待人工确认。
+- **局限**：判官与生成器同模型（qwen3-coder-30b）；D2 因领域实体位置不匹配判 N/A，不混入均值；单人标注用 test-retest 而非 Cohen's κ。
+
 产物与报告：`logs/agent/2026-11-22-public-ollama/`
 （`ablation_*.json`、`manifest_*.json`、`report/benchmark_report.{json,md,html}`、`report/figures/*.svg`）。
 `logs/` 与 `agent/benchmark/output/` 均为本地生成产物，不入库；按上面的命令可逐项复算。
