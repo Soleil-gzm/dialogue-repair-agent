@@ -83,6 +83,27 @@ def test_reproducible():
     assert a == b
 
 
+def test_free_text_phone_chinese_boundary(monkeypatch):
+    """手机号/客服号紧贴中文（无空格）时也被兜底替换。
+
+    Python3 re 默认为 Unicode 模式，中文字符属于 \\w，\\b 在「中文|数字」
+    之间失效；必须用「前后非数字」lookaround 才能命中正文里的电话。
+    同时覆盖 entities 未覆盖的 95 开头客服号。
+    """
+    monkeypatch.setenv("ANONYMIZE_ORG_TERMS", "测试银行")
+    d = {
+        "messages": [
+            {"role": "user", "content": "我电话是13800138000请回拨"},
+            {"role": "assistant", "content": "请拨打95432咨询", "loss": "True"},
+        ]
+    }
+    out = anonymize_dialogue(d)
+    assert "13800138000" not in out["messages"][0]["content"]
+    assert "95432" not in out["messages"][1]["content"]
+    assert "<电话>" in out["messages"][0]["content"]
+    assert "<电话>" in out["messages"][1]["content"]
+
+
 def test_anonymize_text_order_longest_first():
     """长词优先：避免 '测试银行' 被部分替换后残留。"""
     text = "测试银行信用卡中心"

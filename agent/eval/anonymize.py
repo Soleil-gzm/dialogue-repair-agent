@@ -24,6 +24,12 @@ from .entities import _PATTERNS, extract_tag_values, system_text
 _RE_DECIMAL = re.compile(r"^\d+\.\d+$")
 # 纯整数（不含小数点），用于区分「数字」与「小数金额」
 _RE_INT = re.compile(r"^\d+$")
+# 全文兜底电话：不用 \b——Python3 re 默认为 Unicode 模式，中文字符属于 \w，
+# 会让「中文与数字之间」的边界判断失效，导致正文里的手机号漏匹配。
+# 改用「前后非数字」lookaround；额外覆盖 95 开头的客服号（entities 未覆盖）。
+_RE_SAFE_PHONE = re.compile(
+    r"(?<![\d])(?:400-\d{3}-\d{4}|0\d{2,3}-\d{7,8}|95\d{3,}|1[3-9]\d{9})(?![\d])"
+)
 
 # 标签名 → 占位符。标签名属于数据 schema（不是业务数据），可入库。
 # 未列出的标签走「值类型推断」兜底。
@@ -134,7 +140,7 @@ def anonymize_text(text: str, value_map: Dict[str, str],
     # 数字值：边界正则，长串优先
     for val, ph in sorted(numeric, key=lambda x: len(x[0]), reverse=True):
         text = re.sub(rf"(?<![\d.]){re.escape(val)}(?![\d.])", ph, text)
-    text = _PATTERNS["phone"].sub("<电话>", text)
+    text = _RE_SAFE_PHONE.sub("<电话>", text)
     text = _PATTERNS["date"].sub("<日期>", text)
     text = _PATTERNS["amount"].sub("<金额>", text)
     text = _PATTERNS["id"].sub("<编号>", text)
