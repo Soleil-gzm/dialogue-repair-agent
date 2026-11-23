@@ -32,6 +32,8 @@ eval/rules.py
 eval/coherence.py
 eval/judge.py
 eval/pairwise.py
+eval/anonymize.py
+eval/labeling.py
 tools/__init__.py
 tools/check_consistency.py
 tools/check_coherence.py
@@ -93,6 +95,8 @@ tests/test_loop.py
 tests/test_checkpoint.py
 tests/test_checkpoint_batch.py
 tests/test_cassette.py
+tests/test_anonymize.py
+tests/test_labeling.py
 tests/benchmark/__init__.py
 tests/benchmark/test_arms.py
 tests/benchmark/test_canonical.py
