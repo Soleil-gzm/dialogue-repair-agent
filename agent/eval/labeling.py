@@ -54,18 +54,23 @@ def load_judge_off_turns(cassette_path: str) -> Dict[str, Dict[int, str]]:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(rec, dict):
+                continue
             meta = rec.get("meta", {})
-            if meta.get("stage") != "judge":
+            if not isinstance(meta, dict) or meta.get("stage") != "judge":
                 continue
             h = meta.get("dialogue_key")
             if not h:
                 continue
-            text = rec.get("response", {}).get("text", "")
+            resp = rec.get("response", {})
+            text = resp.get("text", "") if isinstance(resp, dict) else ""
             if not text:
                 continue
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
                 continue
             for v in data.get("verdicts", []) or []:
                 if not v.get("related", True):
