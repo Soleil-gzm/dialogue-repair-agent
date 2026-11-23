@@ -126,6 +126,9 @@ docs/notes/2026-11-19-Ollama本地部署与远程调用.md
 docs/notes/2026-11-20-多轮场景跳转检测与改写设计.md
 docs/notes/2026-11-23-公开轨分布校准.md
 docs/reviews/2026-11-20-项目状态评估与代码审查.md
+api/__init__.py
+api/__main__.py
+api/server.py
 
 # ---------- BUILD ----------
 # 内部发布工具与主工程胶水层：只在主工程环境使用，不随开源仓库分发
