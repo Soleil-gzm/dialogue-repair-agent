@@ -2,11 +2,8 @@
 # Dialogue Repair Agent — API 容器（多阶段构建）
 # =============================================================
 # 构建：   docker build -t dialogue-repair-agent:latest .
-# 运行：   docker run --rm -p 8000:8000 \
-#                      -e DEEPSEEK_BASE_URL=http://host.docker.internal:11434/v1 \
-#                      -e DEEPSEEK_API_KEY=dummy \
-#                      -e JUDGE_MODEL=qwen3-coder-30b:latest \
-#                      dialogue-repair-agent:latest
+# 运行：   docker run --rm -p 8000:8000 --env-file .env dialogue-repair-agent:latest
+#          （模型名/端点写在 .env 里，参考 .env.example；不同机器各自配置）
 # Compose：docker compose up --build
 # =============================================================
 
@@ -26,6 +23,8 @@ RUN pip install --no-cache-dir ".[api,llm]"
 # ---- 阶段 2：runtime（瘦镜像，只复制装好依赖的 venv + 源码）----
 FROM python:3.12-slim AS runtime
 
+# 模型名与推理端点因机器而异，镜像不硬编码，全部由运行环境注入（见 .env.example）。
+# 未注入时回落到 agent.runtime.config 中的代码默认值。
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
@@ -42,13 +41,7 @@ WORKDIR /app
 COPY agent ./agent
 COPY pyproject.toml README.md ./
 
-# 默认 env（compose / docker run -e 会覆盖）
-ENV DEEPSEEK_BASE_URL="http://ollama:11434/v1" \
-    DEEPSEEK_API_KEY="ollama-local" \
-    DEEPSEEK_MODEL="qwen3:8b" \
-    JUDGE_MODEL="qwen3-coder-30b:latest" \
-    DEEPSEEK_TEMPERATURE=0.0 \
-    DEEPSEEK_MAX_TOKENS=2048
+# 推理端点/模型名不在此硬编码：由 docker run -e 或 compose env_file 注入
 
 EXPOSE 8000
 
