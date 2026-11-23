@@ -379,7 +379,7 @@ python -m agent.benchmark.fixtures --profile realistic \
 
 ### 5.1 三档评估器（成本递增，可信度递增）
 
-> 当前实现：E1 规则已实现；E2 有 D1 单视角判官（`eval/judge.py`）与成对双向盲评（`eval/pairwise.py`，`--double-blind`）；E3 人工标注未开展。
+> 当前实现：E1 规则已实现；E2 有 D1 单视角判官（`eval/judge.py`）与成对双向盲评（`eval/pairwise.py`，`--double-blind`）；E3 人工标注已就绪——`eval/labeling.py` 可从 A4 结果分层抽样、经 `eval/anonymize.py` 脱敏后生成二分类标注模板（是 / 否 / 不确定），私有轨 50 条样本模板已生成待标注；单人标注用 test-retest，无第二 rater 算 Cohen's κ，声明为 limitation。
 
 | 档 | 方法 | 成本 | 用途 | 可信度 |
 |---|---|---|---|---|
