@@ -652,6 +652,7 @@ def compare_arms(
     tie_rule: str = "exclude",
     trace: Any = None,
     checkpoint: Any = None,
+    double_blind: bool = False,
 ) -> Dict[str, Any]:
     """对比两个臂在同一数据上的 L3 统计。
 
@@ -659,6 +660,8 @@ def compare_arms(
         metric: "blocked"（默认，最严格门禁指标）| "detected"（检出指标）| "clean"（干净样本未被标记）
         tie_rule: 平局处理 —— "exclude"（排除出胜率分母）| "count_half"（各计 0.5）
         checkpoint: 可选 ItemCheckpoint；已完成的配对样本复用上次结果
+        double_blind: 额外跑 E2 双向盲评（A/B 与 B/A 各一次，矛盾记 tie）；
+            需要可用的 LLM judge / client，结果写在 `double_blind`
 
     Returns:
         包含两个 ArmResult、win_rate 和 mcnemar 结果的字典
@@ -669,16 +672,19 @@ def compare_arms(
     stats = {"resumed": 0}
     texts_a: Dict[str, List[Dict[str, Any]]] = {"before": [], "after": []}
     texts_b: Dict[str, List[Dict[str, Any]]] = {"before": [], "after": []}
+    # 双向盲评需要两份最终输出：按样本键对齐，断点跳过/失败的样本自然缺失
+    pairs_a: Dict[str, Dict[str, Any]] = {}
+    pairs_b: Dict[str, Dict[str, Any]] = {}
     # 收集 per-sample outcome：先跑 arm_a，再跑 arm_b，复用同一个 ledger 记账
     outcomes_a = _collect_outcomes(
         arm_a, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_a}",
         ledger=ledger, metric=metric, trace=trace,
-        checkpoint=checkpoint, stats=stats, texts=texts_a,
+        checkpoint=checkpoint, stats=stats, texts=texts_a, pairs_out=pairs_a,
     )
     outcomes_b = _collect_outcomes(
         arm_b, base, defects, client=client, judge=judge, run_id=f"{run_id}_{arm_b}",
         ledger=ledger, metric=metric, trace=trace,
-        checkpoint=checkpoint, stats=stats, texts=texts_b,
+        checkpoint=checkpoint, stats=stats, texts=texts_b, pairs_out=pairs_b,
     )
 
     # 两边长度一致（同一数据），outcomes 顺序 = defects + base
@@ -732,7 +738,45 @@ def compare_arms(
             arm_a: measure_degradation(texts_a["before"], texts_a["after"]),
             arm_b: measure_degradation(texts_b["before"], texts_b["after"]),
         },
+        "double_blind": _run_double_blind(
+            arm_a, arm_b, pairs_a, pairs_b,
+            client=client, judge=judge, run_id=run_id,
+            enabled=double_blind,
+        ),
     }
+
+
+def _run_double_blind(
+    arm_a: str,
+    arm_b: str,
+    pairs_a: Dict[str, Dict[str, Any]],
+    pairs_b: Dict[str, Dict[str, Any]],
+    *,
+    client: Any,
+    judge: Any,
+    run_id: str,
+    enabled: bool,
+) -> Optional[Dict[str, Any]]:
+    """对齐两臂的最终输出并跑 E2；未开启时返回 None。"""
+    if not enabled:
+        return None
+
+    chat = getattr(judge, "client", None) or client
+    if chat is None:
+        raise ValueError("--double-blind 需要判官客户端：请用 --live 或在 compare_arms 注入 judge/client")
+
+    from ..eval.pairwise import PairwiseJudge, compare_blind
+
+    keys = sorted(set(pairs_a) & set(pairs_b))
+    pairs = [(key, pairs_a[key]["after"], pairs_b[key]["after"]) for key in keys]
+    # 双侧都缺的样本已天然排除；记录一边没跑完的样本量，避免被误读成完整覆盖
+    missing = len(set(pairs_a) ^ set(pairs_b))
+    result = compare_blind(
+        PairwiseJudge(chat, run_id=f"{run_id}_blind"),
+        pairs, arm_a=arm_a, arm_b=arm_b,
+    )
+    result["missing_pairs"] = missing
+    return result
 
 
 def _set_arm(obj: Any, arm: str) -> None:
@@ -751,6 +795,18 @@ def _bump_resumed(stats: Optional[Dict[str, int]]) -> None:
         stats["resumed"] = stats.get("resumed", 0) + 1
 
 
+def _pair_key(kind: str, dialogue: Dict[str, Any]) -> str:
+    """双向盲评的对齐键：同一条原始样本在两臂必须得到同一个键。"""
+    return f"{kind}:{dialogue_key(dialogue)}"
+
+
+def _record_pair(pairs: Optional[Dict[str, Dict[str, Any]]], kind: str,
+                 before: Dict[str, Any], after: Dict[str, Any]) -> None:
+    if pairs is None:
+        return
+    pairs[_pair_key(kind, before)] = {"before": before, "after": after}
+
+
 def _collect_outcomes(
     arm: str,
     base: List[dict],
@@ -765,6 +821,7 @@ def _collect_outcomes(
     checkpoint: Any = None,
     stats: Optional[Dict[str, int]] = None,
     texts: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    pairs_out: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[bool]:
     """对每个 defect 样本 + 每个 clean 样本产出一个二进制 outcome（True=好）。
 
@@ -779,6 +836,7 @@ def _collect_outcomes(
         return _collect_outcomes_a2(
             base, defects, client=client, judge=judge, run_id=run_id,
             metric=metric, checkpoint=checkpoint, stats=stats, texts=texts,
+            pairs_out=pairs_out,
         )
 
     _set_arm(client, arm)
@@ -813,6 +871,8 @@ def _collect_outcomes(
             if texts is not None and r.dialogue and r.status not in ("failed", "stopped"):
                 texts["before"].append(record["dialogue"])
                 texts["after"].append(r.dialogue)
+            if r.dialogue and r.status not in ("failed", "stopped"):
+                _record_pair(pairs_out, "defect", record["dialogue"], r.dialogue)
             judge_failed = _judge_failed(r)
             if metric == "detected":
                 outcome = bool(r.issues or r.seen_issues) and not judge_failed
@@ -841,6 +901,8 @@ def _collect_outcomes(
         if texts is not None and r.dialogue and r.status not in ("failed", "stopped"):
             texts["before"].append(dialogue)
             texts["after"].append(r.dialogue)
+        if r.dialogue and r.status not in ("failed", "stopped"):
+            _record_pair(pairs_out, "base", dialogue, r.dialogue)
         judge_failed = _judge_failed(r)
         outcome = not is_clean_intervention(r)
         outcomes.append(outcome)
@@ -861,12 +923,16 @@ def _collect_outcomes_a2(
     checkpoint: Any = None,
     stats: Optional[Dict[str, int]] = None,
     texts: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    pairs_out: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> List[bool]:
     """A2 专用：不经过 AgentRuntime，直接调 run_a2_dialogue。
 
     A2 没有 fallback，因此 blocked 恒为 False；detected 用确定性预检
     （一致性 + 连贯性规则，无判官）判断噪声是否可见；no_leak 才真正调用
     A2 改写并做独立复检。
+
+    开启双向盲评（pairs_out 非空）时，blocked / detected 也会额外改写 defect
+    样本以获得输出；这只增加调用，不改变原有 outcome 口径。
     """
     _set_arm(client, A2)
     _set_arm(judge, A2)
@@ -875,6 +941,11 @@ def _collect_outcomes_a2(
     if metric == "blocked":
         # 无回退能力：defect 侧不需要花一次生成就能给出确定答案
         outcomes = [False] * len(defects)
+        if pairs_out is not None:
+            for record in defects:
+                r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_bd")
+                if not r["parse_error"]:
+                    _record_pair(pairs_out, "defect", record["dialogue"], r["dialogue"])
     elif metric == "detected":
         # 检出只看噪声输入是否已能被确定性检查看见，不调用 A2
         for record in defects:
@@ -883,6 +954,10 @@ def _collect_outcomes_a2(
                           if reference else [])
             violations += check_coherence(record["dialogue"])
             outcomes.append(bool(violations))
+            if pairs_out is not None:
+                r = run_a2_dialogue(client, record["dialogue"], run_id=run_id + "_dc")
+                if not r["parse_error"]:
+                    _record_pair(pairs_out, "defect", record["dialogue"], r["dialogue"])
     elif metric == "no_leak":
         leak_judge = judge or (LLMJudge(client=client, run_id=f"{run_id}_leak")
                                if client is not None else None)
@@ -902,6 +977,8 @@ def _collect_outcomes_a2(
             if texts is not None and not r["parse_error"]:
                 texts["before"].append(record["dialogue"])
                 texts["after"].append(r["dialogue"])
+            if not r["parse_error"]:
+                _record_pair(pairs_out, "defect", record["dialogue"], r["dialogue"])
             violations = (check_consistency(before=reference, after=r["dialogue"])
                           if reference else [])
             violations += check_coherence(r["dialogue"], judge=leak_judge)
@@ -923,6 +1000,8 @@ def _collect_outcomes_a2(
         if texts is not None and not r["parse_error"]:
             texts["before"].append(dialogue)
             texts["after"].append(r["dialogue"])
+        if not r["parse_error"]:
+            _record_pair(pairs_out, "base", dialogue, r["dialogue"])
         outcome = not a2_clean_intervened(r, dialogue)
         outcomes.append(outcome)
         if checkpoint and not r["parse_error"]:
@@ -1008,6 +1087,8 @@ def main(argv=None) -> int:
                     help="L3 对比用的 outcome 定义，默认 blocked（最严格门禁）")
     ap.add_argument("--tie-rule", default="exclude", choices=["exclude", "count_half"],
                     help="胜率平局处理：exclude 排除出分母（默认）或 count_half 各计 0.5")
+    ap.add_argument("--double-blind", action="store_true",
+                    help="E2 双向盲评：A/B 与 B/A 各评一次，矛盾记 tie（需 --compare + LLM）")
     ap.add_argument("--out", default="", help="结果 JSON 路径；默认打印到标准输出")
     ap.add_argument("--trace", default="",
                     help="决策链 JSONL 输出路径；用于定位 policy_error / 循环等失败原因")
@@ -1017,6 +1098,9 @@ def main(argv=None) -> int:
 
     if not args.arm and not args.compare:
         print("[ERROR] 必须指定 --arm 或 --compare", file=sys.stderr)
+        return 2
+    if args.double_blind and not args.compare:
+        print("[ERROR] --double-blind 只能与 --compare 一起使用", file=sys.stderr)
         return 2
     if args.arm and args.compare:
         print("[ERROR] --arm 和 --compare 不能同时用", file=sys.stderr)
@@ -1118,9 +1202,10 @@ def main(argv=None) -> int:
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
                                ledger=ledger, metric=args.metric,
                                tie_rule=args.tie_rule, trace=trace,
-                               checkpoint=checkpoint)
-        uses_judge = args.metric == "no_leak" or any(
-            arm in (A4, A4R) for arm in (arm_a, arm_b))
+                               checkpoint=checkpoint,
+                               double_blind=args.double_blind)
+        uses_judge = (args.metric == "no_leak" or args.double_blind
+                      or any(arm in (A4, A4R) for arm in (arm_a, arm_b)))
         payload["run"] = {
             "limit": args.limit,
             "limit_base": args.limit_base,
@@ -1150,6 +1235,10 @@ def main(argv=None) -> int:
                 judge_temperature=0.0,
             ),
         }
+        if args.double_blind:
+            from ..eval.pairwise import PAIRWISE_VERSION
+
+            payload["fingerprint"]["evaluator"]["pairwise_prompt_version"] = PAIRWISE_VERSION
         if ledger:
             ledger.close()
         if trace:
