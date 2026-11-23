@@ -90,7 +90,7 @@ def _system_text(dialogue: Dict[str, Any]) -> str:
 
 
 def _build_messages(dialogue: Dict[str, Any], turn: int,
-                    issues: Any) -> list:
+                    issues: Any, rag_context: str = "") -> list:
     msgs = dialogue.get("messages") or []
     target = msgs[turn]
     lines = []
@@ -106,6 +106,12 @@ def _build_messages(dialogue: Dict[str, Any], turn: int,
             if not isinstance(issue, dict):
                 continue
             lines.append(f"- {issue.get('rule')}: {issue.get('detail')}")
+    if rag_context:
+        # 检索增强：只作为参考范例，明确要求不得照抄，避免污染实体
+        lines.append(
+            "参考：历史上相似问题的修复示例（仅作风格参考，不要照抄内容，"
+            "尤其不要引入示例里的实体）：\n" + rag_context[:2000]
+        )
     lines.append("请输出 json：{\"content\": \"改写后的回复\"}")
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -115,8 +121,14 @@ def _build_messages(dialogue: Dict[str, Any], turn: int,
 
 def make_rewrite_segment(client: Any, *, temperature: float = 0.3,
                          max_tokens: int = 512,
-                         run_id: str = "adhoc") -> FunctionTool:
-    """构造带模型客户端的 rewrite_segment 工具。"""
+                         run_id: str = "adhoc",
+                         rag_augmenter: Any = None) -> FunctionTool:
+    """构造带模型客户端的 rewrite_segment 工具。
+
+    rag_augmenter：可选，实现 query()/render_for_prompt() 的检索组件。
+    提供时会把历史相似修复案例拼进改写 prompt；检索失败会静默降级为无增强，
+    绝不让检索故障阻断改写。
+    """
 
     def _run(state: Any, args: Dict) -> Dict:
         dialogue = args.get("dialogue")
@@ -134,9 +146,22 @@ def make_rewrite_segment(client: Any, *, temperature: float = 0.3,
 
         original = str(target.get("content") or "")
         dialogue_key = getattr(state, "key", "") or ""
+
+        # 检索增强：取历史相似案例拼进 prompt；任何异常都降级为无增强
+        rag_context = ""
+        if rag_augmenter is not None:
+            try:
+                prev_user = ""
+                if turn > 0 and msgs[turn - 1].get("role") == "user":
+                    prev_user = str(msgs[turn - 1].get("content") or "")
+                hits = rag_augmenter.query(prev_user, original, top_k=3)
+                rag_context = rag_augmenter.render_for_prompt(hits) or ""
+            except Exception:
+                rag_context = ""
+
         try:
             resp = client.chat(
-                _build_messages(dialogue, turn, issues),
+                _build_messages(dialogue, turn, issues, rag_context),
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stage="generate",
@@ -162,6 +187,7 @@ def make_rewrite_segment(client: Any, *, temperature: float = 0.3,
             "status": "rewritten",
             "dialogue": rewritten,
             "rewritten_turn": turn,
+            "rag_used": bool(rag_context),
             "violation_count": 0,
             "violations": [],
             "tokens": tokens,

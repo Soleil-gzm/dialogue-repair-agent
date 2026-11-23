@@ -99,6 +99,8 @@ tests/test_cassette.py
 tests/test_anonymize.py
 tests/test_labeling.py
 tests/test_preprocess.py
+tests/test_rag_wiring.py
+tests/test_planning.py
 tests/benchmark/__init__.py
 tests/benchmark/test_arms.py
 tests/benchmark/test_canonical.py

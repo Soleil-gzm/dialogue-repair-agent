@@ -1,42 +1,39 @@
-"""ReActAgent + PlanningExecutorAgent — 显式架构化包装。
+"""显式 ReAct / Planning&Executor 架构化。
 
-ReAct 模式的核心循环：
-  Observe(state) → Think(policy.decide) → Act(registry.invoke) → Observe(state updated)
-我们的 AgentRuntime 已经实现了这个循环，但没有显式命名。
-ReActAgent 就是把它包装成一个可被显式引用的类。
+ReActAgent 把现有 AgentRuntime 包装成显式的 ReAct 变体（observe→think→act→observe），
+PlanningExecutorAgent 则是两阶段：先规划候选轮，再只对候选轮做精细检查。
 
-Planning&Executor 的核心：
-  Plan（粗扫一遍，标出候选 turn）→ Execute（对每个候选跑一次 ReAct loop）→ Summarize
+设计约束：
+  - 不硬编码任何轮次。业务侧的特殊轮（如私有轨随机开场句）必须由调用方
+    通过 exclude_turns 传入，而不是写死在架构层。
+  - 规划必须真正改变执行行为，否则只是装饰：
+    plan 产出的候选集会换算成"判官忽略集"，让判官只检查候选轮。
 """
 
 from __future__ import annotations
 
-import copy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from ..runtime.loop import AgentResult, AgentRuntime
-from ..runtime.policy import ACTION_CALL_TOOL, ACTION_STOP, Policy
 
 
 @dataclass
 class ReActStep:
-    """一次 ReAct step 的完整记录——面试时可以展示这个 step list 作为架构证据。"""
+    """一次 ReAct step 的完整记录（Thought / Action / Observation）。"""
     step: int
-    thought: str            # policy 的 reason（即 ReAct 的 "Thought"）
-    action: str             # tool name（即 ReAct 的 "Action"）
-    args: Dict[str, Any]    # tool args
-    observation: Dict[str, Any]  # tool result（即 ReAct 的 "Observation"）
+    thought: str
+    action: str
+    args: Dict[str, Any]
+    observation: Dict[str, Any]
     tokens: int = 0
 
 
 class ReActAgent:
-    """显式 ReAct 变体：把 AgentRuntime 的循环包装成 think→act→observe 的 step list。
+    """显式 ReAct 变体：包装 AgentRuntime 的 think→act→observe 循环。
 
-    面试讲法：
-      "我们的对话修复 Agent 是 ReAct 变体——Thought 阶段是 LLM 决策（policy.decide），
-       Action 阶段是工具调用（registry.invoke），Observation 阶段是工具结果吸收进 state。
-       三个硬约束：预算保护 / 重复调用检测 / Trace 追踪，防止 Agent 死循环。"
+    Thought = policy.decide 的 reason；Action = 工具名；Observation = 工具结果。
+    循环的三道护栏（预算 / 重复调用 / trace）由 AgentRuntime 提供。
     """
 
     def __init__(self, runtime: AgentRuntime):
@@ -44,100 +41,95 @@ class ReActAgent:
 
     def run(self, dialogue: Dict[str, Any],
             reference: Optional[Dict[str, Any]] = None) -> AgentResult:
-        # 底层 AgentRuntime 就是 ReAct 循环，直接跑
-        result = self.runtime.run(dialogue, reference=reference)
-        # trace 里 event=decide + event=tool_result 就是 ReAct step 的完整序列
-        return result
+        return self.runtime.run(dialogue, reference=reference)
 
     @staticmethod
     def extract_steps(trace: List[Dict[str, Any]]) -> List[ReActStep]:
-        """从 runtime.trace 里解析出 ReAct step list——方便 Debug 和面试展示。"""
+        """从 runtime.trace 解析 ReAct step 序列，便于调试与展示。"""
         steps: List[ReActStep] = []
-        pending_decision: Optional[Dict[str, Any]] = None
-        step_idx = 0
+        pending: Optional[Dict[str, Any]] = None
+        idx = 0
         for ev in trace:
-            if ev.get("event") == "decide":
-                if ev.get("action") == ACTION_CALL_TOOL:
-                    pending_decision = ev
-            elif ev.get("event") == "tool_result" and pending_decision is not None:
-                step_idx += 1
+            event = ev.get("event")
+            if event == "decide" and ev.get("action") == "call_tool":
+                pending = ev
+            elif event == "tool_result" and pending is not None:
+                idx += 1
                 steps.append(ReActStep(
-                    step=step_idx,
-                    thought=pending_decision.get("reason", ""),
-                    action=pending_decision.get("tool", ""),
-                    args=pending_decision.get("args", {}),
-                    observation={"ok": ev.get("ok"), "terminal": ev.get("terminal"),
-                                 "latency_ms": ev.get("latency_ms")},
-                    tokens=ev.get("tokens", 0),
+                    step=idx,
+                    thought=str(pending.get("reason", "")),
+                    action=str(pending.get("tool", "")),
+                    args=pending.get("args", {}) or {},
+                    observation={
+                        "ok": ev.get("ok"),
+                        "terminal": ev.get("terminal"),
+                        "latency_ms": ev.get("latency_ms"),
+                    },
+                    tokens=int(ev.get("tokens", 0) or 0),
                 ))
-                pending_decision = None
+                pending = None
         return steps
 
 
 # =============================================================================
-# Planning&Executor — 先规划候选 turn，再逐个精细检查
+# Planning & Executor
 # =============================================================================
 
 @dataclass
 class Plan:
-    candidates: List[int] = field(default_factory=list)   # 候选 assistant turn 下标
-    rationale: str = ""                                     # 规划理由（LLM 输出）
+    candidates: List[int] = field(default_factory=list)
+    rationale: str = ""
 
 
 class PlanningExecutorAgent:
-    """Planning&Executor 模式：两阶段 Agent。
+    """两阶段 Agent：Plan（选候选轮）→ Execute（只对候选轮做精细检查）。
 
-    Phase 1 — Plan：粗扫一遍对话，让 LLM 输出 "我要检查这些 assistant turn"
-    Phase 2 — Execute：对每个候选 turn 单独跑一次 ReAct loop（复用现有 runtime）
-    Phase 3 — Summarize：合并所有 turn 的 issues，输出最终 result
+    runtime_factory: Callable[[frozenset], AgentRuntime]
+        接收"判官应忽略的轮次集合"，返回装配好的 runtime。
+        这样 Planning 不必依赖 benchmark 模块，也不会与 build_runtime 循环导入。
 
-    面试讲法：
-      "ReAct 在长对话上会被无效轮次稀释——判官对 20 轮对话里只有 2 轮有问题也得全量扫一遍。
-       Planning&Executor 先粗粒度扫一遍找候选（比如 'turn 6 和 turn 10 看起来答非所问'），
-       再只对候选 turn 做精细检查。这样预算用在刀刃上，判官也不被固定模式的伪影干扰。"
+    exclude_turns: 调用方显式声明的排除轮（如业务伪影轮），默认空。
     """
 
-    def __init__(self, runtime: AgentRuntime, planner_llm_client: Any = None):
-        self.runtime = runtime
-        self.planner_client = planner_llm_client  # Optional: 如果传了外部 client，plan 也走 LLM；否则走规则启发式
+    def __init__(self, runtime_factory: Callable[[frozenset], AgentRuntime],
+                 *, exclude_turns: Any = ()):
+        self.runtime_factory = runtime_factory
+        self.exclude_turns = tuple(sorted({int(t) for t in exclude_turns}))
 
     def plan(self, dialogue: Dict[str, Any]) -> Plan:
-        """粗扫一遍，输出候选 assistant turn 列表。
+        msgs = dialogue.get("messages") or []
+        excluded = set(self.exclude_turns)
+        candidates = [
+            i for i, m in enumerate(msgs)
+            if isinstance(m, dict) and m.get("role") == "assistant" and i not in excluded
+        ]
+        return Plan(candidates=candidates,
+                    rationale=f"候选 assistant 轮（排除 {sorted(excluded)}）")
 
-        默认启发式：找所有 assistant turn，让判官快速扫一遍（粗粒度 prompt）。
-        如果有 planner_client，可以让 LLM 输出结构化 turn 列表。
-        """
-        messages = dialogue.get("messages", [])
-        candidates: List[int] = []
-        # 跳过 turn 2（私有轨业务伪影占位）和 turn 4（判官稳定漏判）——和 ignore_turns 契约对齐
-        for i, m in enumerate(messages):
-            if m.get("role") == "assistant" and i not in (2, 4):
-                candidates.append(i)
-        return Plan(candidates=candidates, rationale="启发式：所有非伪影 assistant turn")
+    def execute(self, dialogue: Dict[str, Any], plan: Plan,
+                reference: Optional[Dict[str, Any]] = None) -> AgentResult:
+        msgs = dialogue.get("messages") or []
+        candidates = set(plan.candidates)
+        all_assistant = [
+            i for i, m in enumerate(msgs)
+            if isinstance(m, dict) and m.get("role") == "assistant"
+        ]
+        # 非候选轮交给判官忽略——规划由此真正收窄了检查范围
+        ignored = frozenset(t for t in all_assistant if t not in candidates)
+        runtime = self.runtime_factory(ignored)
+        return runtime.run(dialogue, reference=reference)
 
-    def execute(self, dialogue: Dict[str, Any],
-                plan: Plan, reference: Optional[Dict[str, Any]] = None) -> AgentResult:
-        """对 plan.candidates 里的每个 turn 跑一次 ReAct loop。"""
-        if not plan.candidates:
-            return AgentResult(
-                status="accepted", dialogue=dialogue, termination="stop",
-                reason="无候选 turn，对话通过", iterations=0, tool_calls=0, tokens=0,
-            )
-
-        # 简化版：直接跑全量 loop（底层 AgentRuntime 已经会扫所有 turn）
-        # Planner 的价值体现在 "plan 可以是有选择的——只把候选 turn 喂给判官"
-        result = self.runtime.run(dialogue, reference=reference)
-        return result
+    def run(self, dialogue: Dict[str, Any],
+            reference: Optional[Dict[str, Any]] = None) -> AgentResult:
+        return self.execute(dialogue, self.plan(dialogue), reference=reference)
 
 
 def build_agent(arm: str, runtime: AgentRuntime,
                 *, planning: bool = False) -> ReActAgent | PlanningExecutorAgent:
-    """工厂函数——根据 arm 和 planning flag 选择架构。
-
-    面试讲法：
-      "arm A2/A3 是 baseline（单次重写 / 纯规则），A4/A4R 是完整 ReAct。
-       如果对话很长（>15 轮），我会开 planning=True，用 Planning&Executor 模式先粗扫再精查。"
-    """
+    """按需选择架构；planning=True 时需改用 runtime_factory 形式的构造方式。"""
     if planning:
-        return PlanningExecutorAgent(runtime)
+        raise ValueError(
+            "PlanningExecutorAgent 需要 runtime_factory，请直接实例化并传入 "
+            "lambda ignored: build_runtime(...) "
+        )
     return ReActAgent(runtime)

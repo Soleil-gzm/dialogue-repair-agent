@@ -16,7 +16,7 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 try:
@@ -35,7 +35,8 @@ from ..benchmark.agent_eval import (
     build_runtime,
 )
 from ..eval.judge import JUDGE_VERSION, LLMJudge, RUBRIC_VERSION
-from ..runtime.config import LLMSettings, judge_settings, load_dotenv
+from ..runtime.config import LLMSettings, load_dotenv
+from ..agent.react import PlanningExecutorAgent
 
 # --------------------------------------------------------------------------- 全局
 # lifespan 里初始化一次 client（进程内缓存，连接池复用）——每个请求只是 build_runtime，
@@ -116,6 +117,14 @@ class RepairRequest(BaseModel):
         default=None,
         description="可选 run_id；缺省按时间戳自动生成",
     )
+    planning: bool = Field(
+        default=False,
+        description="启用 Planning&Executor：先选候选轮，再只对候选轮做精细检查（仅 A4/A4R）",
+    )
+    rag: bool = Field(
+        default=False,
+        description="启用检索增强；需要 RAG_STORE_PATH 指向已构建的向量库目录",
+    )
 
 
 class RepairResponse(BaseModel):
@@ -130,6 +139,8 @@ class RepairResponse(BaseModel):
     ok: bool
     issues: List[Dict[str, Any]]
     dialogue: Dict[str, Any]
+    planning: bool = False
+    rag: bool = False
 
 
 class ArmInfo(BaseModel):
@@ -148,6 +159,20 @@ ARMLY_DESCRIPTIONS: Dict[str, str] = {
 
 
 # --------------------------------------------------------------------------- 端点
+def _ollama_base() -> str:
+    """取 Ollama 原生 API 基址（RAG embedding 用）。
+
+    LLM 走 OpenAI 兼容层（.../v1），embedding 走 Ollama 原生端点，需要去掉 /v1。
+    """
+    raw = os.environ.get("RAG_OLLAMA_BASE_URL") or (
+        _settings.base_url if _settings is not None else ""
+    )
+    base = (raw or "").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    return base or "http://127.0.0.1:11434"
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     """服务 + LLM 健康检查。"""
@@ -210,9 +235,45 @@ async def repair(req: RepairRequest) -> RepairResponse:
     if req.arm in ("A4", "A4R"):
         judge = LLMJudge(client=_client, run_id=f"judge_{run_id}", ignore_turns=ignore_fs)
 
-    runtime = build_runtime(req.arm, client=_client, judge=judge, run_id=run_id)
+    # 检索增强：按需从 RAG_STORE_PATH 加载已构建的向量库
+    augmenter = None
+    if req.rag:
+        store_path = os.environ.get("RAG_STORE_PATH", "").strip()
+        if not store_path:
+            raise HTTPException(400, "启用 rag 需要设置 RAG_STORE_PATH 指向向量库目录")
+        from ..rag import OllamaEmbedder, RAGAugmenter, VectorStore
+
+        embedder = OllamaEmbedder(
+            model=os.environ.get("RAG_EMBED_MODEL", "bge-m3:latest"),
+            base_url=_ollama_base(),
+        )
+        store = VectorStore(store_path, dim=embedder.dim())
+        store.load()
+        if store.size == 0:
+            raise HTTPException(400, f"向量库为空：{store_path}")
+        augmenter = RAGAugmenter(store, embedder)
+
     try:
-        result = runtime.run(req.dialogue, reference=req.reference)
+        if req.planning:
+            if req.arm not in ("A4", "A4R"):
+                raise HTTPException(400, "planning 仅支持带语义判官的 A4 / A4R")
+            # Planning：候选轮由 plan 决定，非候选轮交给判官忽略
+            agent = PlanningExecutorAgent(
+                lambda ignored: build_runtime(
+                    req.arm, client=_client, run_id=run_id,
+                    ignore_turns=ignored, rag_augmenter=augmenter,
+                ),
+                exclude_turns=req.ignore_turns,
+            )
+            result = agent.run(req.dialogue, reference=req.reference)
+        else:
+            runtime = build_runtime(
+                req.arm, client=_client, judge=judge, run_id=run_id,
+                ignore_turns=ignore_fs, rag_augmenter=augmenter,
+            )
+            result = runtime.run(req.dialogue, reference=req.reference)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             502,
@@ -231,6 +292,8 @@ async def repair(req: RepairRequest) -> RepairResponse:
         ok=result.ok,
         issues=result.issues + result.seen_issues,
         dialogue=result.dialogue,
+        planning=req.planning,
+        rag=req.rag,
     )
 
 

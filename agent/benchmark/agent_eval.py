@@ -297,8 +297,13 @@ def a2_clean_intervened(parsed: Dict[str, Any], original: Dict[str, Any]) -> boo
 
 
 def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
-                  run_id: str = "ablation", trace: Any = None):
-    """按臂装配运行时；会先清空工具注册表，避免跨臂污染。"""
+                  run_id: str = "ablation", trace: Any = None,
+                  ignore_turns: Any = None, rag_augmenter: Any = None):
+    """按臂装配运行时；会先清空工具注册表，避免跨臂污染。
+
+    ignore_turns：判官忽略的轮次集合（Planning 用它限定检查范围）。
+    rag_augmenter：可选检索组件，注入后 A4R 的改写会带上历史相似案例。
+    """
     if arm not in ARMS:
         raise ValueError(f"未知臂: {arm}（可选 {ARMS}）")
     if arm == A2:
@@ -332,9 +337,12 @@ def build_runtime(arm: str, *, client: Any = None, judge: Any = None,
         return _runtime(LLMPolicy(client, run_id=run_id, trace=trace), trace=trace)
 
     # A4 / A4R 都带语义判官
-    register_all(judge=judge or LLMJudge(client=client, run_id=run_id))
+    ignored = frozenset(ignore_turns or ())
+    register_all(judge=judge or LLMJudge(client=client, run_id=run_id,
+                                         ignore_turns=ignored))
     if arm == A4R:
-        ToolRegistry.register(make_rewrite_segment(client, run_id=run_id))
+        ToolRegistry.register(make_rewrite_segment(client, run_id=run_id,
+                                                   rag_augmenter=rag_augmenter))
         # 两次改写 + 每轮复检，工具调用数会明显高于 A4，预算同步放宽
         return _runtime(
             LLMPolicy(client, run_id=run_id, allow_rewrite=True, trace=trace),
