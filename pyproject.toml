@@ -25,12 +25,14 @@ dev = ["pytest>=7"]
 llm = ["httpx>=0.27", "tenacity>=8"]
 # 把 agent 暴露为 HTTP 服务：FastAPI 框架 + uvicorn ASGI server
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+# RAG 向量检索：numpy 余弦相似度
+rag = ["numpy>=1.24"]
 
 [project.urls]
 Repository = "https://github.com/Soleil-gzm/dialogue-repair-agent"
 
 [tool.setuptools]
-packages = ["agent", "agent.api", "agent.benchmark", "agent.eval", "agent.tools", "agent.runtime", "agent.tests", "agent.tests.benchmark"]
+packages = ["agent", "agent.api", "agent.benchmark", "agent.eval", "agent.tools", "agent.runtime", "agent.rag", "agent.tests", "agent.tests.benchmark"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
