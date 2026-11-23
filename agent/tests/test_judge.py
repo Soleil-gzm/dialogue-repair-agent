@@ -58,7 +58,7 @@ class TestRender:
 
 class TestIgnoreTurns:
     def test_ignored_turn_violation_dropped(self):
-        """开场白轮（如 turn 1）被排除：仍要求判官给出判定，但不采信其违规。"""
+        """开场白轮被排除：已判违规直接丢弃。"""
         d = _dialogue("你好", "您好。", "我想问还款。", "答非所问的内容。")
         text = _verdicts((1, False, "未回应问候"), (3, False, "答非所问"))
         judge = LLMJudge(client=FakeLLMClient(default=text),
@@ -66,14 +66,26 @@ class TestIgnoreTurns:
         violations = judge(d)
         assert [v["turn"] for v in violations] == [3]
 
-    def test_ignored_turn_still_requires_verdict(self):
-        """排除只是不采信；判官漏判该轮仍按契约失败。"""
+    def test_ignored_turn_not_in_expected(self):
+        """ignore 轮从 expected pairs 剔除——判官漏判该轮不再算契约违约。"""
         d = _dialogue("你好", "您好。", "我想问还款。", "好的。")
+        # 判官只给 turn 3 判（跳过 turn 1），但 ignore_turns={1} 应允许
         text = _verdicts((3, True, ""))
         judge = LLMJudge(client=FakeLLMClient(default=text),
                          ignore_turns=frozenset({1}))
-        with pytest.raises(JudgeError):
-            judge(d)
+        violations = judge(d)
+        assert violations == []  # 不应抛 JudgeError
+
+    def test_ignored_turn_output_still_filtered(self):
+        """判官若仍输出 ignore 轮的 verdict，违规被丢弃；正确轮仍保留。"""
+        d = _dialogue("你好", "您好。", "我想问还款。", "答非所问。")
+        text = _verdicts((1, False, "未回应问候"), (3, False, "答非所问"))
+        judge = LLMJudge(client=FakeLLMClient(default=text),
+                         ignore_turns=frozenset({1}))
+        # prompt 里 turn 1 已被过滤，判官不该还输出 turn 1；
+        # 但即便输出，违规也应被丢弃
+        violations = judge(d)
+        assert [v["turn"] for v in violations] == [3]
 
 
 class TestParseVerdict:

@@ -73,27 +73,41 @@ def _clip(content: Any) -> str:
     return text
 
 
-def iter_pairs(dialogue: Dict[str, Any]) -> Iterator[Tuple[int, int, str, str]]:
-    """按“user 诉求 -> 紧随其后的 assistant 回复”成对遍历。
+def iter_pairs(dialogue: Dict[str, Any],
+               ignore_turns: Optional[FrozenSet[int]] = None
+               ) -> Iterator[Tuple[int, int, str, str]]:
+    """按"user 诉求 -> 紧随其后的 assistant 回复"成对遍历。
+
+    Args:
+        dialogue: 对话对象，必须含 messages 列表。
+        ignore_turns: 可选的 assistant turn 集合，遍历到时直接跳过，
+                      但不改变 messages 下标语义——pairs 里保留原始 turn 号，
+                      保证判官 verdict 的 turn 号与原始下标对齐。
 
     yields: (user_turn, assistant_turn, user_content, assistant_content)
     """
     pending: Any = None
+    ignore = ignore_turns or frozenset()
     messages = list((dialogue or {}).get("messages") or [])[:MAX_TURNS]
     for i, msg in enumerate(messages):
         role = msg.get("role")
         if role == "user":
             pending = (i, _clip(msg.get("content")))
         elif role == "assistant" and pending is not None:
+            if i in ignore:
+                # 跳过该 assistant 轮对应的整对（user 诉求 + assistant 回复），
+                # 但不消耗 pending：下一个非 ignore 的 assistant 轮仍能对上
+                continue
             yield pending[0], i, pending[1], _clip(msg.get("content"))
             pending = None
 
 
-def render_pairs(dialogue: Dict[str, Any]) -> str:
-    """成对渲染：降低小模型对齐“哪条回复对应哪条诉求”的难度。"""
+def render_pairs(dialogue: Dict[str, Any],
+                 ignore_turns: Optional[FrozenSet[int]] = None) -> str:
+    """成对渲染：降低小模型对齐"哪条回复对应哪条诉求"的难度。"""
     return "\n\n".join(
         f"user[{u}] 诉求：{uc}\nassistant[{a}] 回复：{ac}"
-        for u, a, uc, ac in iter_pairs(dialogue)
+        for u, a, uc, ac in iter_pairs(dialogue, ignore_turns=ignore_turns)
     )
 
 
@@ -148,7 +162,9 @@ def _extract_verdicts(text: str) -> Dict[int, Tuple[bool, str]]:
     return found
 
 
-def parse_verdict(text: str, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
+def parse_verdict(text: str, dialogue: Dict[str, Any],
+                  ignore_turns: Optional[FrozenSet[int]] = None
+                  ) -> List[Dict[str, Any]]:
     """解析判官输出；不合契约直接抛 JudgeError。
 
     v3 契约：每条成对回复都必须有 related 判定。漏判不是“没问题”，
@@ -159,7 +175,7 @@ def parse_verdict(text: str, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
         # 这不是"没有违规"，必须显式失败。
         raise JudgeError("判官返回空内容（可能被 max_tokens 截断）")
 
-    expected = {a for _, a, _, _ in iter_pairs(dialogue)}
+    expected = {a for _, a, _, _ in iter_pairs(dialogue, ignore_turns=ignore_turns)}
     if not expected:
         return []
 
@@ -208,9 +224,12 @@ class LLMJudge:
     tokens_used: int = 0
 
     def __call__(self, dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
+        ignore = self.ignore_turns or frozenset()
+        pairs_text = render_pairs(dialogue, ignore_turns=ignore)
+
         payload = [{"role": "system", "content": SYSTEM_PROMPT},
                    {"role": "user", "content": USER_TEMPLATE.format(
-                       pairs=render_pairs(dialogue))}]
+                       pairs=pairs_text)}]
 
         resp = self.client.chat(
             payload,
@@ -222,10 +241,12 @@ class LLMJudge:
         )
         self.tokens_used += resp.total_tokens
 
-        violations = parse_verdict(resp.text, dialogue)
-        if self.ignore_turns:
+        violations = parse_verdict(resp.text, dialogue, ignore_turns=ignore)
+        # 双保险：parse_verdict 的 expected 已不包含 ignore 轮，
+        # 判官若仍输出了这些轮的违规则直接丢弃（不应发生）
+        if ignore:
             violations = [v for v in violations
-                          if v.get("turn") not in self.ignore_turns]
+                          if v.get("turn") not in ignore]
         for v in violations:
             v["judge_version"] = self.version
         return violations
