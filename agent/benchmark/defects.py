@@ -185,8 +185,13 @@ def drop_skipped(records: List[dict]) -> Tuple[List[dict], int]:
 
 
 def generate(dialogues: List[dict], per_type: int = 20,
-             seed: int = 20261113) -> List[dict]:
-    """按类型均匀生成缺陷样本，返回带标注的记录列表。"""
+             seed: int = 20261113,
+             exclude_turns: frozenset = frozenset()) -> List[dict]:
+    """按类型均匀生成缺陷样本，返回带标注的记录列表。
+
+    exclude_turns：禁止注入的 assistant 轮下标。私有轨首轮开场白不参与
+    连贯性判分，缺陷也不应注入该轮，否则召回会被判分排除策略吃掉。
+    """
     if not dialogues:
         raise ValueError("至少需要 1 条对话")
     rng = random.Random(seed)
@@ -196,6 +201,13 @@ def generate(dialogues: List[dict], per_type: int = 20,
             base_i = (t_i * per_type + k) % len(dialogues)
             d = dialogues[base_i]
             bad, meta = inject(d, dtype, rng)
+            # 命中被排除轮则重抽（最多 20 次），仍不行就计为跳过
+            for _ in range(20):
+                if meta.get("skipped") or meta.get("turn") not in exclude_turns:
+                    break
+                bad, meta = inject(d, dtype, rng)
+            else:
+                meta = {**meta, "skipped": True, "skip_reason": "excluded_turn"}
             records.append({
                 "sample_key": f"{dtype}-{k:03d}",
                 "dialogue": bad,
@@ -215,11 +227,16 @@ def main(argv=None) -> int:
     ap.add_argument("--per-type", type=int, default=20)
     ap.add_argument("--seed", type=int, default=20261113)
     ap.add_argument("--out", default="agent/fixtures/public/defects_v1.jsonl")
+    ap.add_argument("--exclude-turns", default="",
+                    help="禁止注入的 assistant 轮下标，逗号分隔；私有轨用它排除开场轮")
     args = ap.parse_args(argv)
 
+    exclude = frozenset(
+        int(x) for x in args.exclude_turns.split(",") if x.strip())
     src = Path(args.input)
     dialogues = json.loads(src.read_text(encoding="utf-8"))
-    records = generate(dialogues, per_type=args.per_type, seed=args.seed)
+    records = generate(dialogues, per_type=args.per_type, seed=args.seed,
+                       exclude_turns=exclude)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

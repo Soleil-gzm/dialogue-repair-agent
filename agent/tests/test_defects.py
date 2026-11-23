@@ -59,6 +59,15 @@ class TestGenerate:
         with pytest.raises(ValueError):
             inject(dialogues[0], "D9_nope", random.Random(0))
 
+    def test_exclude_turns_never_injected(self, dialogues):
+        """排除开场轮：仍生成同样数量，但没有任何缺陷落在该轮。"""
+        records = generate(dialogues, per_type=10, seed=20261113,
+                           exclude_turns=frozenset({2}))
+        assert len(records) == len(DEFECT_TYPES) * 10
+        turns = [r["defect"].get("turn") for r in records
+                 if not r["defect"].get("skipped")]
+        assert turns and 2 not in turns
+
     def test_jsonl_roundtrip(self, dialogues):
         records = generate(dialogues, per_type=2, seed=7)
         lines = to_jsonl(records).strip().split("\n")

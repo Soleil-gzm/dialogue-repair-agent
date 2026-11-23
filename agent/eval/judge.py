@@ -200,6 +200,10 @@ class LLMJudge:
     stage: str = "judge"
     run_id: str = "adhoc"
     extra: Dict[str, Any] = field(default_factory=dict)
+    # 不参与判分的 assistant 轮（下标）。私有轨首轮开场白是业务固定话术，
+    # 与随机开场句无承接关系，判官会稳定误标；在此显式排除。
+    # 仍要求判官输出该轮判定（v3 契约），只是不采信。
+    ignore_turns: frozenset = frozenset()
     # 累计用量：工具据此回传本次调用的增量，让 loop 的 token 预算覆盖判官消耗
     tokens_used: int = 0
 
@@ -219,6 +223,9 @@ class LLMJudge:
         self.tokens_used += resp.total_tokens
 
         violations = parse_verdict(resp.text, dialogue)
+        if self.ignore_turns:
+            violations = [v for v in violations
+                          if v.get("turn") not in self.ignore_turns]
         for v in violations:
             v["judge_version"] = self.version
         return violations

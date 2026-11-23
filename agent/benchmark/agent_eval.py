@@ -1076,6 +1076,9 @@ def main(argv=None) -> int:
                     help="cassette JSONL 路径：replay 档读取；live 档同时录制")
     ap.add_argument("--checkpoint", default="",
                     help="断点续跑 JSONL：已完成条目复用上次结果，不再调用模型")
+    ap.add_argument("--ignore-turns", default="",
+                    help="判官不采信的 assistant 轮下标（逗号分隔）；"
+                         "私有轨用它排除开场白轮")
     ap.add_argument("--input", default="",
                     help="干净对话 JSON 路径；默认 agent/fixtures/public/base_v1.json")
     ap.add_argument("--defects", default="",
@@ -1187,6 +1190,17 @@ def main(argv=None) -> int:
         trace = TraceWriter(args.trace)
     checkpoint = ItemCheckpoint(args.checkpoint) if args.checkpoint else None
 
+    ignore_turns = frozenset(
+        int(x) for x in args.ignore_turns.split(",") if x.strip())
+    judge = None
+    if ignore_turns:
+        if client is None:
+            print("[ERROR] --ignore-turns 需要判官客户端（--live 或 replay cassette）",
+                  file=sys.stderr)
+            return 2
+        judge = LLMJudge(client=client, run_id=f"judge_{stamp}",
+                         ignore_turns=ignore_turns)
+
     if args.compare:
         parts = [s.strip() for s in args.compare.split(",") if s.strip()]
         if len(parts) != 2:
@@ -1199,6 +1213,7 @@ def main(argv=None) -> int:
                 return 2
 
         payload = compare_arms(arm_a, arm_b, base, defects, client=client,
+                               judge=judge,
                                run_id=f"compare_{arm_a}_vs_{arm_b}_{stamp}",
                                ledger=ledger, metric=args.metric,
                                tie_rule=args.tie_rule, trace=trace,
@@ -1286,7 +1301,7 @@ def main(argv=None) -> int:
     # 单臂评测路径
     result = run_arm(args.arm, base, defects, client=client, ledger=ledger,
                      run_id=f"ablation_{args.arm}_{stamp}", trace=trace,
-                     checkpoint=checkpoint)
+                     checkpoint=checkpoint, judge=judge)
     if ledger:
         ledger.close()
     if trace:
@@ -1311,6 +1326,7 @@ def main(argv=None) -> int:
         "profile": args.profile,
         "cassette": args.cassette or None,
         "checkpoint": args.checkpoint or None,
+        "ignore_turns": sorted(ignore_turns) if ignore_turns else None,
         "replayed_calls": getattr(client, "replayed", 0) if replay else 0,
     }
     # 结果必须自带出处：输入与评估器指纹进结果，环境信息单独写 manifest（不判等）

@@ -56,6 +56,26 @@ class TestRender:
         assert render_pairs({"messages": []}) == ""
 
 
+class TestIgnoreTurns:
+    def test_ignored_turn_violation_dropped(self):
+        """开场白轮（如 turn 1）被排除：仍要求判官给出判定，但不采信其违规。"""
+        d = _dialogue("你好", "您好。", "我想问还款。", "答非所问的内容。")
+        text = _verdicts((1, False, "未回应问候"), (3, False, "答非所问"))
+        judge = LLMJudge(client=FakeLLMClient(default=text),
+                         ignore_turns=frozenset({1}))
+        violations = judge(d)
+        assert [v["turn"] for v in violations] == [3]
+
+    def test_ignored_turn_still_requires_verdict(self):
+        """排除只是不采信；判官漏判该轮仍按契约失败。"""
+        d = _dialogue("你好", "您好。", "我想问还款。", "好的。")
+        text = _verdicts((3, True, ""))
+        judge = LLMJudge(client=FakeLLMClient(default=text),
+                         ignore_turns=frozenset({1}))
+        with pytest.raises(JudgeError):
+            judge(d)
+
+
 class TestParseVerdict:
     def test_related_false_becomes_issue(self):
         d = _dialogue("我想问下物流。", "换货需要保持包装完整。")
