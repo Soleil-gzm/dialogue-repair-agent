@@ -1,0 +1,48 @@
+# 排除一切不影响构建的东西——让 build context 更小、更快
+
+# Git + IDE
+.git
+.gitignore
+.trae
+.trae-cn
+.trae-cn-server
+.vscode
+*.pyc
+__pycache__
+*.egg-info
+.eggs
+
+# 本地实验产物（gitignored，但还是显式排）
+logs/
+logs/agent/**/*.jsonl
+logs/**/*.json
+
+# 作品集 + 无关项目
+portfolio/
+**/datalabel/**
+**/Sentence_Transformers/**
+**/ASR_Error_Modeling/**
+**/module_based_dialogue_synthesis/**
+**/data_cleaning_and_augmentation_pipeline/**
+
+# 私有数据（PII，绝对不能进镜像）
+agent/fixtures/private/**
+/tmp/**
+
+# 环境配置（.env 含本地路径/密钥，compose 里单独挂载）
+.env
+
+# 文档（不影响运行）
+**/*.md
+notes/
+docs/
+
+# 测试（可选，构建镜像时不需要；要进测试镜像再单独 COPY）
+agent/tests/
+.pytest.ini
+pyproject.toml.bak
+
+# Docker 自己
+Dockerfile
+.dockerignore
+docker-compose.yml

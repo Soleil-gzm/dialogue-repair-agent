@@ -1,0 +1,80 @@
+# =============================================================
+# Dialogue Repair Agent — docker compose 一键起
+# =============================================================
+#
+# 首次使用：
+#   1. docker compose up -d --build          # 起 ollama + api
+#   2. docker compose exec ollama pull qwen2.5:14b   # 拉模型（CPU 友好）
+#   3. curl http://127.0.0.1:8000/health    # 验证 api 可达 + ollama reachable
+#   4. curl -X POST http://127.0.0.1:8000/api/v1/repair -H 'content-type: application/json' \
+#        -d '{"dialogue":{"messages":[...]}, "arm":"A4", "ignore_turns":[2,4]}'
+#
+# 想换大模型（如 qwen3-coder-30b:latest）：
+#   docker compose exec ollama pull qwen3-coder-30b:latest
+#   然后把 JUDGE_MODEL 改成 qwen3-coder-30b:latest
+#
+# 停止：docker compose down      数据卷保留
+# 清数据：docker compose down -v  连带 Ollama 模型一起删
+#
+# GPU 透传（如果宿主机有 NVIDIA GPU）：
+#   在 api 服务下加 device_ids: ['0']，ollama 会自动用 GPU 跑 30B
+# =============================================================
+
+services:
+  # ---------- Ollama 本地模型服务 ----------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: dr-ollama
+    # 模型持久化卷——compose down 不会删掉，下次直接用
+    volumes:
+      - ollama_models:/root/.ollama
+    # 让容器能用 GPU（可选，需要 nvidia-docker 才生效；没装 nvidia-docker 也能 CPU 跑）
+    # device_ids: ['0']
+    environment:
+      # 容器内显存/内存分配；无 GPU 时自动 CPU fallback
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_KEEP_ALIVE: "0"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:11434/api/tags | grep -q models || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    ports:
+      - "11434:11434"
+    networks:
+      - dr-net
+
+  # ---------- API 服务 ----------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dr-api
+    # 等 ollama 健康后再起 api——避免 api 启动时 liveness 检查过不了
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      # compose 内置 DNS：ollama 服务 → ollama:11434
+      DEEPSEEK_BASE_URL: http://ollama:11434/v1
+      DEEPSEEK_API_KEY: ollama-local
+      DEEPSEEK_MODEL: qwen2.5:14b
+      JUDGE_MODEL: qwen2.5:14b          # 默认判官也用 14B，CPU 友好；有 GPU 改 qwen3-coder-30b:latest
+      DEEPSEEK_TEMPERATURE: "0.0"
+      DEEPSEEK_MAX_TOKENS: "2048"
+    ports:
+      - "8000:8000"
+    networks:
+      - dr-net
+
+# Ollama 模型持久化数据卷
+volumes:
+  ollama_models:
+    name: dr-ollama-models
+
+# 服务间专用网络（api 和 ollama 通过这个网络用服务名互访）
+networks:
+  dr-net:
+    name: dr-network
